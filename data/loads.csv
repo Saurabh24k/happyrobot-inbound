@@ -1,0 +1,5 @@
+
+load_id,origin,destination,pickup_datetime,delivery_datetime,equipment_type,loadboard_rate,notes,weight,commodity_type,num_of_pieces,miles,dimensions
+L001,"Chicago, IL","Dallas, TX",2025-08-06T08:00:00,2025-08-07T18:00:00,Dry Van,1700,Drop & Hook,42000,Consumer Goods,24,965,48x102
+L002,"Indianapolis, IN","Atlanta, GA",2025-08-06T09:00:00,2025-08-07T17:00:00,Reefer,2200,Live Load,38000,Produce,20,535,53x102
+L003,"Milwaukee, WI","Detroit, MI",2025-08-06T10:00:00,2025-08-06T20:00:00,Flatbed,1500,Tarps Required,30000,Steel,10,330,48x102
