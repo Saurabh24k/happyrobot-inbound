@@ -9,6 +9,8 @@ import json
 from .config import API_KEY, ALLOW_ORIGINS
 from .adapters import fmcsa
 from .services.search import search_loads
+from .services.negotiate import evaluate_offer as eval_offer
+
 
 app = FastAPI(title="HappyRobot Inbound API (Starter)")
 
@@ -73,6 +75,18 @@ class Load(BaseModel):
 class SearchLoadsResponse(BaseModel):
     results: List[Load]
 
+class EvaluateOfferRequest(BaseModel):
+    load_id: str
+    loadboard_rate: float
+    carrier_offer: float
+    round_num: int = 1
+
+class EvaluateOfferResponse(BaseModel):
+    decision: str          # accept | counter | reject
+    counter_rate: float
+    floor: float
+    max_rounds: int
+
 class LogEventRequest(BaseModel):
     # Free-form payload for now; we'll structure later
     event: Optional[str] = None
@@ -114,6 +128,19 @@ def search_loads_endpoint(req: SearchLoadsRequest):
     )
     loads = [Load(**r) for r in results]
     return SearchLoadsResponse(results=loads)
+
+@app.post(
+    "/evaluate_offer",
+    response_model=EvaluateOfferResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def evaluate_offer_ep(req: EvaluateOfferRequest):
+    res = eval_offer(
+        loadboard_rate=req.loadboard_rate,
+        carrier_offer=req.carrier_offer,
+        round_num=req.round_num,
+    )
+    return EvaluateOfferResponse(**res)
 
 @app.post(
     "/log_event",
