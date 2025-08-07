@@ -91,7 +91,8 @@ def verify_mc_endpoint(req: VerifyMCRequest):
     - If req.mock is true, return a simulated 'eligible' response (useful for demos).
     - Else call FMCSA (if FMCSA_API_KEY is set), with safe fallbacks.
     """
-    result = fmcsa.verify_mc(req.mc_number, mock=bool(req.mock))
+    mc = str(req.mc_number)          # string for downstream call
+    result = fmcsa.verify_mc(mc, mock=bool(req.mock))
     return VerifyMCResponse(**result)
 
 @app.post(
