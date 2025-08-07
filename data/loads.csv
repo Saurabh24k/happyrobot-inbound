@@ -1,5 +1,26 @@
-
 load_id,origin,destination,pickup_datetime,delivery_datetime,equipment_type,loadboard_rate,notes,weight,commodity_type,num_of_pieces,miles,dimensions
-L001,"Chicago, IL","Dallas, TX",2025-08-06T08:00:00,2025-08-07T18:00:00,Dry Van,1700,Drop & Hook,42000,Consumer Goods,24,965,48x102
-L002,"Indianapolis, IN","Atlanta, GA",2025-08-06T09:00:00,2025-08-07T17:00:00,Reefer,2200,Live Load,38000,Produce,20,535,53x102
-L003,"Milwaukee, WI","Detroit, MI",2025-08-06T10:00:00,2025-08-06T20:00:00,Flatbed,1500,Tarps Required,30000,Steel,10,330,48x102
+L001,Chicago, IL,Dallas, TX,2025-08-06T08:00:00,2025-08-07T18:00:00,Dry Van,1700,Drop & Hook,42000,Consumer Goods,24,965,48x102
+L002,Indianapolis, IN,Houston, TX,2025-08-06T07:00:00,2025-08-07T20:00:00,Dry Van,1800,Live Load,43000,Consumer Goods,26,1010,48x102
+L003,Atlanta, GA,Charlotte, NC,2025-08-06T09:00:00,2025-08-06T17:00:00,Reefer,1200,34 °F,38000,Produce,20,244,53x102
+L004,Los Angeles, CA,Phoenix, AZ,2025-08-06T06:00:00,2025-08-06T18:00:00,Flatbed,1500,Tarp Req.,46000,Steel Coils,4,372,48x102
+L005,Denver, CO,Salt Lake City, UT,2025-08-06T08:00:00,2025-08-06T18:00:00,Dry Van,1100,Live/Live,40000,Packaging,22,520,48x102
+L006,Miami, FL,Orlando, FL,2025-08-06T05:30:00,2025-08-06T12:30:00,Dry Van,800,Drop & Hook,28000,E-Commerce,18,236,48x102
+L007,Seattle, WA,Portland, OR,2025-08-06T07:00:00,2025-08-06T14:00:00,Reefer,950,38 °F,35000,Dairy,21,174,53x102
+L008,Cincinnati, OH,Chicago, IL,2025-08-06T10:00:00,2025-08-06T20:00:00,Flatbed,1300,Side Kit,42000,Lumber,6,300,48x102
+L009,Kansas City, MO,St. Louis, MO,2025-08-06T06:00:00,2025-08-06T14:00:00,Dry Van,700,Live Load,25000,Auto Parts,16,249,48x102
+L010,Newark, NJ,Boston, MA,2025-08-06T09:00:00,2025-08-06T19:00:00,Dry Van,1400,Drop & Hook,32000,Electronics,20,226,48x102
+L011,Phoenix, AZ,Albuquerque, NM,2025-08-06T07:30:00,2025-08-06T17:30:00,Reefer,1050,36 °F,30000,Pharma,18,417,53x102
+L012,Memphis, TN,Atlanta, GA,2025-08-06T06:00:00,2025-08-06T16:00:00,Step Deck,1350,Ramps Req.,44000,Construction Eq.,3,384,48x102
+L013,Baltimore, MD,Richmond, VA,2025-08-06T08:00:00,2025-08-06T15:00:00,Dry Van,900,Live/Live,27000,Paper Goods,17,154,48x102
+L014,Minneapolis, MN,Omaha, NE,2025-08-06T07:00:00,2025-08-06T19:00:00,Flatbed,1250,No Tarps,41000,Agricultural,5,380,48x102
+L015,Detroit, MI,Cleveland, OH,2025-08-06T11:00:00,2025-08-06T18:00:00,Reefer,1000,Frozen (-10 °F),34000,Frozen Foods,19,169,53x102
+L016,San Antonio, TX,El Paso, TX,2025-08-06T05:00:00,2025-08-06T17:00:00,Dry Van,950,Live/Live,30000,Textiles,18,551,48x102
+L017,Reno, NV,Los Angeles, CA,2025-08-06T09:00:00,2025-08-06T20:00:00,Step Deck,1450,Flags Req.,42000,Heavy Equip.,4,487,48x102
+L018,Boise, ID,Spokane, WA,2025-08-06T06:30:00,2025-08-06T15:00:00,Dry Van,800,Live Load,26000,Wood Products,15,287,48x102
+L019,Birmingham, AL,Jacksonville, FL,2025-08-06T07:00:00,2025-08-06T19:00:00,Reefer,1250,40 °F,36000,Seafood,22,470,53x102
+L020,Oklahoma City, OK,Tulsa, OK,2025-08-06T05:00:00,2025-08-06T12:00:00,Dry Van,650,Drop & Hook,22000,Plastics,14,106,48x102
+L021,Sacramento, CA,Las Vegas, NV,2025-08-06T08:00:00,2025-08-06T20:00:00,Tanker,1800,Food Grade,45000,Cooking Oil,1,558,42x102
+L022,Columbus, OH,Nashville, TN,2025-08-06T09:30:00,2025-08-06T21:30:00,Dry Van,1150,Live Load,31000,Furniture,20,381,48x102
+L023,Charlotte, NC,Savannah, GA,2025-08-06T08:30:00,2025-08-06T17:30:00,Flatbed,1200,Straps Only,38000,Steel Pipe,6,252,48x102
+L024,Helena, MT,Billings, MT,2025-08-06T06:00:00,2025-08-06T13:00:00,Dry Van,700,Live/Live,24000,Animal Feed,16,236,48x102
+L025,New Orleans, LA,Baton Rouge, LA,2025-08-06T07:00:00,2025-08-06T13:00:00,Tanker,850,Hazmat,42000,Chemicals,1,81,42x102
