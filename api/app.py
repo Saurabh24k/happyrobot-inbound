@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Header, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from datetime import datetime
 from pathlib import Path
 import json
@@ -32,9 +32,15 @@ def require_api_key(x_api_key: Optional[str] = Header(None)) -> None:
 
 # ----- Models -------------------------------------------------------------
 class VerifyMCRequest(BaseModel):
-    mc_number: str = Field(..., description="Carrier MC (docket) number")
-    mock: Optional[bool] = Field(False, description="If true, return a simulated 'eligible' result for testing")
-
+    mc_number: Union[str, int] = Field(
+        ...,
+        description="Carrier MC (docket) number (accepts string or int)"
+    )
+    mock: Optional[bool] = Field(
+         False,
+         description="If true, return a simulated 'eligible' result for testing"
+     )
+    
 class VerifyMCResponse(BaseModel):
     mc_number: str
     eligible: bool
