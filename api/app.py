@@ -1,8 +1,9 @@
+# api/app.py
 from fastapi import FastAPI, Header, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Union
-from datetime import datetime, date, time, timezone
+from datetime import datetime, date, time
 from pathlib import Path
 from collections import defaultdict
 import json
@@ -13,18 +14,17 @@ from .services.search import search_loads
 from .services.negotiate import evaluate_offer as eval_offer
 
 from .db import init_db, get_session
-from .models import Event
+from .models import Event, Offer, ToolCall, Utterance
 from sqlmodel import select
-
 
 app = FastAPI(title="HappyRobot Inbound API (Starter)")
 
-# --- Startup ---------------------------------------------------------------
+# ── Startup ────────────────────────────────────────────────────────────────
 @app.on_event("startup")
 def _startup():
     init_db()
 
-# --- CORS ------------------------------------------------------------------
+# ── CORS ───────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"] if ALLOW_ORIGINS == "*" else [ALLOW_ORIGINS],
@@ -33,14 +33,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Auth dependency -------------------------------------------------------
+# ── Auth dependency ────────────────────────────────────────────────────────
 def require_api_key(x_api_key: Optional[str] = Header(None)) -> None:
     """Require header: x-api-key: <API_KEY>"""
     if not x_api_key or x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
     return None
 
-# --- Pydantic models -------------------------------------------------------
+# ── Pydantic models ────────────────────────────────────────────────────────
 class VerifyMCRequest(BaseModel):
     mc_number: Union[str, int] = Field(..., description="Carrier MC (docket) number")
     mock: Optional[bool] = Field(False, description="If true, return simulated 'eligible' result")
@@ -93,7 +93,7 @@ class LogEventRequest(BaseModel):
     event: Optional[str] = None
     data: Optional[Dict[str, Any]] = None
 
-# --- Helpers for analytics -------------------------------------------------
+# ── Helpers ────────────────────────────────────────────────────────────────
 def _avg(nums: List[float]) -> Optional[float]:
     if not nums:
         return None
@@ -103,11 +103,27 @@ def _range_to_utc(s: str, u: str) -> tuple[datetime, datetime]:
     """since/until (YYYY-MM-DD) -> naive datetimes covering full days."""
     s_date = datetime.strptime(s, "%Y-%m-%d").date()
     u_date = datetime.strptime(u, "%Y-%m-%d").date()
-    start = datetime.combine(s_date, time.min)  # no tzinfo
-    end   = datetime.combine(u_date, time.max)  # no tzinfo
+    start = datetime.combine(s_date, time.min)
+    end   = datetime.combine(u_date, time.max)
     return start, end
 
-# --- Endpoints: core features ---------------------------------------------
+def _to_float(x: Any) -> Optional[float]:
+    try:
+        if x is None or x == "":
+            return None
+        return float(x)
+    except Exception:
+        return None
+
+def _to_int(x: Any) -> Optional[int]:
+    try:
+        if x is None or str(x).strip() == "":
+            return None
+        return int(x)
+    except Exception:
+        return None
+
+# ── Core endpoints ─────────────────────────────────────────────────────────
 @app.post("/verify_mc", response_model=VerifyMCResponse, dependencies=[Depends(require_api_key)])
 def verify_mc_endpoint(req: VerifyMCRequest):
     """Verify carrier MC eligibility (FMCSA or mock)."""
@@ -117,7 +133,7 @@ def verify_mc_endpoint(req: VerifyMCRequest):
 
 @app.post("/search_loads", response_model=SearchLoadsResponse, dependencies=[Depends(require_api_key)])
 def search_loads_endpoint(req: SearchLoadsRequest):
-    """Search loads from CSV with simple filters and return top 3."""
+    """Search loads from CSV with simple filters and return top results."""
     results = search_loads(
         equipment_type=req.equipment_type,
         origin=req.origin,
@@ -138,40 +154,111 @@ def evaluate_offer_ep(req: EvaluateOfferRequest):
     )
     return EvaluateOfferResponse(**res)
 
+# ── Logging & artifacts ────────────────────────────────────────────────────
 @app.post("/log_event", dependencies=[Depends(require_api_key)])
 def log_event(req: LogEventRequest):
     """
-    Append a structured event to data/events.jsonl (for audit) AND persist to DB.
+    Append a structured event to data/events.jsonl (audit) AND persist to DB.
+
+    Accepts:
+      - event: 'booked' | 'no-agreement' | 'no-match' | 'failed-auth' | 'abandoned'
+               plus optional: 'offer', 'tool-call', 'final-artifacts'
+      - data: free-form payload; we look for keys like:
+              session_id, mc, load_id, sentiment, rounds, agreed_rate, loadboard_rate, equipment_type
+              and arrays: offers[], tool_calls[], transcript[] (when event = final-artifacts)
+
+    Also tolerates legacy keys like 'quoted_rate' (we'll store as a carrier offer step).
     """
     events_path = Path(__file__).resolve().parents[1] / "data" / "events.jsonl"
     events_path.parent.mkdir(parents=True, exist_ok=True)
 
+    now = datetime.utcnow()
+    data: Dict[str, Any] = req.data or {}
     record = {
-        "ts": datetime.utcnow().isoformat(),
+        "ts": now.isoformat(),
         "event": (req.event or "unspecified"),
-        "data": (req.data or {}),
+        "data": data,
     }
 
-    # 1) Keep file-based append for simple auditing
+    # Always keep a file audit trail
     with open(events_path, "a") as f:
         f.write(json.dumps(record) + "\n")
 
-    # 2) Persist to DB
-    data = record["data"]
-    ev = Event(
-        event=record["event"],
-        session_id=data.get("session_id"),
-        mc=data.get("mc"),
-        load_id=data.get("load_id"),
-        sentiment=(data.get("sentiment") or "").lower() or None,
-        rounds=int(data["rounds"]) if str(data.get("rounds", "")).isdigit() else None,
-        agreed_rate=float(data["agreed_rate"]) if data.get("agreed_rate") is not None else None,
-        loadboard_rate=float(data["loadboard_rate"]) if data.get("loadboard_rate") is not None else None,
-        equipment_type=data.get("equipment_type"),
-        extra=data,
-    )
+    ev_name = (req.event or "unspecified").lower()
+    sid = (data.get("session_id") or data.get("sessionId") or "").strip() or None
+
     with get_session() as s:
-        s.add(ev)
+        # 1) Final outcome rows → feed analytics/dashboard
+        final_labels = {"booked", "no-agreement", "no-match", "failed-auth", "abandoned", "transfer_failed"}
+        if ev_name in final_labels:
+            # map transfer_failed into abandoned for analytics later
+            event_for_row = "abandoned" if ev_name == "transfer_failed" else ev_name
+            e = Event(
+                event=event_for_row,
+                session_id=sid,
+                mc=data.get("mc"),
+                load_id=data.get("load_id"),
+                sentiment=(data.get("sentiment") or None),
+                rounds=_to_int(data.get("rounds")),
+                agreed_rate=_to_float(data.get("agreed_rate")),
+                loadboard_rate=_to_float(data.get("loadboard_rate")),
+                equipment_type=data.get("equipment_type"),
+                extra=data,
+            )
+            s.add(e)
+
+            # If a legacy 'quoted_rate' was sent on 'booked', record it as a carrier offer
+            qrate = _to_float(data.get("quoted_rate"))
+            if sid and qrate is not None:
+                s.add(Offer(session_id=sid, who="carrier", value=qrate, t=now))
+
+            # If agreed_rate exists on 'booked', add agent-side closing offer as well
+            arate = _to_float(data.get("agreed_rate"))
+            if sid and arate is not None:
+                s.add(Offer(session_id=sid, who="agent", value=arate, t=now))
+
+        # 2) Single 'offer' events (optional, if you choose to emit during negotiation)
+        if ev_name == "offer" and sid:
+            who = (data.get("who") or "carrier").lower()
+            val = _to_float(data.get("value"))
+            if val is not None:
+                s.add(Offer(session_id=sid, who=who, value=val, t=now))
+
+        # 3) Single 'tool-call' events (optional)
+        if ev_name == "tool-call" and sid:
+            fn = data.get("fn") or "unknown"
+            ok = data.get("ok")
+            info = {k: v for k, v in data.items() if k not in {"session_id", "fn", "ok"}}
+            s.add(ToolCall(session_id=sid, fn=fn, ok=bool(ok) if ok is not None else None, info=info))
+
+        # 4) Bulk artifacts: offers[], tool_calls[], transcript[] (preferred one-shot at call end)
+        if ev_name == "final-artifacts" and sid:
+            for o in (data.get("offers") or []):
+                val = _to_float(o.get("value"))
+                if val is None:
+                    continue
+                who = (o.get("who") or "carrier").lower()
+                t = now
+                try:
+                    t_raw = o.get("t")
+                    if t_raw:
+                        t = datetime.fromisoformat(str(t_raw).replace("Z", "+00:00")).replace(tzinfo=None)
+                except Exception:
+                    pass
+                s.add(Offer(session_id=sid, who=who, value=val, t=t))
+
+            for tc in (data.get("tool_calls") or []):
+                fn = tc.get("fn") or "unknown"
+                ok = tc.get("ok")
+                info = {k: v for k, v in tc.items() if k not in {"fn", "ok"}}
+                s.add(ToolCall(session_id=sid, fn=fn, ok=bool(ok) if ok is not None else None, info=info))
+
+            for line in (data.get("transcript") or []):
+                role = (line.get("role") or "user").lower()
+                text = (line.get("text") or "").strip()
+                if text:
+                    s.add(Utterance(session_id=sid, role=role, text=text, t=now))
+
         s.commit()
 
     return {"status": "ok", "written": True}
@@ -180,7 +267,7 @@ def log_event(req: LogEventRequest):
 def health():
     return {"status": "ok"}
 
-# --- Endpoints: analytics + calls (DB-backed) -----------------------------
+# ── Analytics & calls ──────────────────────────────────────────────────────
 @app.get("/analytics/summary", dependencies=[Depends(require_api_key)])
 def analytics_summary(
     since: str = Query(..., description="YYYY-MM-DD"),
@@ -201,13 +288,13 @@ def analytics_summary(
             "timeseries": [],
         }
 
-    # Group events by session (a "call")
+    # Group by session
     sessions: dict[str, list[Event]] = defaultdict(list)
     for e in rows:
         sid = e.session_id or "unknown"
         sessions[sid].append(e)
 
-    # Totals by event name (we count occurrences; last event per session is usually outcome)
+    # Totals
     alias = {
         "booked": "booked",
         "no-agreement": "no_agreement",
@@ -314,19 +401,37 @@ def calls_list(
 def call_detail(session_id: str):
     with get_session() as sess:
         evs = list(sess.exec(select(Event).where(Event.session_id == session_id)))
-    if not evs:
-        raise HTTPException(status_code=404, detail="Call not found")
-    evs.sort(key=lambda x: x.ts)
-    first, last = evs[0], evs[-1]
+        if not evs:
+            raise HTTPException(status_code=404, detail="Call not found")
+        evs.sort(key=lambda x: x.ts)
+        first, last = evs[0], evs[-1]
+
+        offers = list(sess.exec(
+            select(Offer).where(Offer.session_id == session_id).order_by(Offer.t.asc())
+        ))
+        tools = list(sess.exec(
+            select(ToolCall).where(ToolCall.session_id == session_id).order_by(ToolCall.id.asc())
+        ))
+        lines = list(sess.exec(
+            select(Utterance).where(Utterance.session_id == session_id).order_by(Utterance.id.asc())
+        ))
+
+    # Earliest timestamp across artifacts
+    earliest = first.ts
+    if offers:
+        earliest = min(earliest, offers[0].t)
+    if lines:
+        earliest = min(earliest, lines[0].t)
+
     return {
         "id": session_id,
-        "started_at": first.ts.isoformat(),
+        "started_at": earliest.isoformat(),
         "duration_sec": 0,
         "mc_number": first.mc or last.mc,
         "selected_load_id": first.load_id or last.load_id,
-        "offers": [],        # TODO: extend if you log offer steps
+        "offers": [{"t": o.t.isoformat(), "who": o.who, "value": o.value} for o in offers],
         "outcome": last.event,
         "sentiment": last.sentiment,
-        "transcript": [],    # TODO: extend if you log conversation turns
-        "tool_calls": [],    # TODO: extend if you log verify/search/evaluate calls
+        "transcript": [{"role": l.role, "text": l.text} for l in lines],
+        "tool_calls": [{"fn": t.fn, "ok": t.ok, **(t.info or {})} for t in tools],
     }
