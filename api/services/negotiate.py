@@ -22,15 +22,26 @@ def evaluate_offer(
     miles: Optional[Any] = None,            # lane miles (for dynamic tolerance)
     accept_close_to_prev: bool = True,      # accept if offer ≤ prev + tol
     dynamic_tol_by_miles: bool = True,      # bump tol on longer lanes
-    accept_below_floor: bool = True,        # if they ask below our floor, accept it (we pay less)
+
+    # Below-floor handling
+    accept_below_floor: bool = True,        # we can accept below our floor (payer wins)
+    low_confirm_ratio: float = 0.85,        # R1 guard: if offer < floor*ratio → confirm first
+    min_ratio_vs_board: float = 0.50,       # R1 guard: if offer < board*ratio → confirm first
+
     debug: bool = False,
     **_
 ) -> Dict:
     """
     We are the payer — lower is better.
 
-    Output includes helper fields to keep your graph state in sync:
-      decision: "accept" | "counter" | "counter-final" | "reject"
+    Possible decisions:
+      - "accept"        : take their number (counter_rate)
+      - "counter"       : not final; propose counter_rate
+      - "counter-final" : last counter this negotiation
+      - "confirm-low"   : (new) R1 guard — offer looks too low; ask the caller to confirm verbally
+      - "reject"        : cannot proceed (e.g., no board rate)
+
+    Output also includes helper fields to keep your graph state in sync:
       counter_rate: float
       floor: float
       max_rounds: int
@@ -79,6 +90,7 @@ def evaluate_offer(
             # track the highest anchor we've ever set
             next_anc = price if (anc_v is None or price > anc_v) else anc_v
         elif decision == "accept":
+            # record acceptance point as a (soft) anchor for history
             next_anc = price if (anc_v is None or price > anc_v) else anc_v
 
         out = {
@@ -96,8 +108,8 @@ def evaluate_offer(
 
     # ---------- parse ----------
     lb = max(0.0, _to_f(loadboard_rate))
-    offer = max(0.0, _to_f(carrier_offer))  # offer may be 0 on "give me a number" probe
-    # round_num may come as "", ensure sensible default
+    offer = max(0.0, _to_f(carrier_offer))  # may be 0 on "give me a number" probe
+
     try:
         r_in = int(_to_f(round_num)) if str(round_num).strip() else 1
     except Exception:
@@ -122,6 +134,7 @@ def evaluate_offer(
     if r <= 1 and (prev is not None or anc_high_val is not None):
         r = 2
     r = max(1, min(r, max_rounds))
+    r1 = (r == 1)
 
     # Effective tolerance (wider for longer lanes)
     tol_eff = float(tol)
@@ -149,6 +162,15 @@ def evaluate_offer(
 
     # Clamp & snap
     target = _snap(min(max(target, floor), ceil), tick)
+    floor_r = _snap(floor, tick)
+
+    # ---------- R1 lowball guard (protects against ASR mishears like 1500→500) ----------
+    if offer > 0 and r1:
+        too_low_vs_floor = offer < (floor * float(low_confirm_ratio))
+        too_low_vs_board = offer < (lb * float(min_ratio_vs_board))
+        if too_low_vs_floor or too_low_vs_board:
+            # Ask the agent to *confirm* verbally before accepting
+            return _mk_out("confirm-low", _snap(offer, tick), floor, r, prev, anc_high_val, "r1_lowball_confirm")
 
     # ---------- fast accepts ----------
     # If they return to an earlier anchor we set, accept (avoid whiplash)
@@ -161,9 +183,11 @@ def evaluate_offer(
         if offer <= prev + (tol_eff if accept_close_to_prev else 0.0):
             return _mk_out("accept", _snap(min(offer, prev), tick), floor, r, prev, anc_high_val, "met_prev_anchor")
 
-    # Under floor but allowed → accept (we pay less)
+    # Under floor but allowed → accept (payer wins)
     if offer < floor and accept_below_floor:
-        return _mk_out("accept", _snap(offer, tick), floor, r, prev, anc_high_val, "below_floor_accept")
+        # Only auto-accept if NOT R1 or the gap is small (within tol); else we already returned confirm-low above
+        if (not r1) or (floor - offer) <= tol_eff:
+            return _mk_out("accept", _snap(offer, tick), floor, r, prev, anc_high_val, "below_floor_accept")
 
     # Within target + tol → accept
     if offer <= target + tol_eff:
@@ -180,21 +204,34 @@ def evaluate_offer(
 
     # ---------- normal counter path ----------
     # Never counter above their ask; keep non-increasing vs prev.
-    counter = min(target, offer)
+    counter = target
     if prev is not None:
         counter = min(counter, prev)
-    counter = _snap(max(counter, floor), tick)
+
+    counter = _snap(counter, tick)
+
+    # Ensure we respect our floor *without* violating “never above their ask”
+    if counter < floor_r:
+        # If bringing counter up to floor would exceed their ask, just accept their ask.
+        if floor_r >= offer:
+            return _mk_out("accept", _snap(offer, tick), floor, r, prev, anc_high_val, "avoid_counter_above_ask")
+        counter = floor_r
+
+    # Final safety: if counter would end up ≥ their ask, accept their ask.
+    if counter >= offer:
+        return _mk_out("accept", _snap(offer, tick), floor, r, prev, anc_high_val, "accept_instead_of_counter_above_ask")
 
     if r >= max_rounds:
         # Final round: choose strongest credible number ≤ ask, preferring anchors > floor.
-        candidates = [counter, floor]
+        candidates = [counter, floor_r]
         if prev is not None:
-            candidates.append(min(prev, offer))
+            candidates.append(min(_snap(prev, tick), _snap(offer, tick)))
         if anc_high_val is not None:
-            candidates.append(min(anc_high_val, offer))
-        cf = max(_snap(max(candidates), tick), _snap(floor, tick))
-        if abs(cf - offer) <= 0.01:
+            candidates.append(min(_snap(anc_high_val, tick), _snap(offer, tick)))
+        cf = max(candidates)  # best credible that’s still ≤ ask
+        # If the credible best equals their ask, accept.
+        if abs(cf - _snap(offer, tick)) <= 0.01:
             return _mk_out("accept", _snap(offer, tick), floor, r, prev, anc_high_val, "final_accept_eq")
-        return _mk_out("counter-final", cf, floor, r, prev, anc_high_val, "final_counter")
+        return _mk_out("counter-final", _snap(cf, tick), floor, r, prev, anc_high_val, "final_counter")
 
     return _mk_out("counter", counter, floor, r, prev, anc_high_val, "normal_counter")
