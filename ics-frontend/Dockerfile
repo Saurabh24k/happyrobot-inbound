@@ -4,7 +4,6 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
-# Vite build (doesn't need API env; we inject at runtime)
 RUN npm run build
 
 # --- runtime stage ---
