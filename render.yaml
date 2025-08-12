@@ -1,18 +1,18 @@
 services:
-  # --- Backend (reuse your existing service name & layout) ---
+  # --- Backend (your working service) ---
   - type: web
-    name: happyrobot-inbound          # <- matches the service you already have
+    name: happyrobot-inbound
     env: docker
-    rootDir: .                        # <- root of repo
-    dockerfilePath: Dockerfile        # <- root Dockerfile you used
+    rootDir: .
+    dockerfilePath: Dockerfile
     plan: free
     autoDeploy: true
     healthCheckPath: /health
     envVars:
       - key: API_KEY
-        sync: false                   # set in Render UI when blueprint asks
+        sync: false
       - key: ALLOW_ORIGINS
-        value: "*"                    # quick win; tighten to frontend URL later
+        value: "*"
       - key: WATCHDOG_ENABLED
         value: "1"
       - key: WATCHDOG_INTERVAL_SEC
@@ -25,12 +25,12 @@ services:
     name: inbound-frontend
     env: docker
     rootDir: ics-frontend
-    dockerfilePath: ics-frontend/Dockerfile
+    dockerfilePath: Dockerfile
     plan: free
     autoDeploy: true
     healthCheckPath: /
     envVars:
       - key: API_BASE_URL
-        value: https://happyrobot-inbound.onrender.com   # <- your live backend URL
+        value: https://happyrobot-inbound.onrender.com
       - key: API_KEY
-        sync: false   # set same value as backend API_KEY (exposed client-side)
+        sync: false
