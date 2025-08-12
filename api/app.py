@@ -17,7 +17,7 @@ from .db import init_db, get_session
 from .models import Event, Offer, ToolCall, Utterance
 from sqlmodel import select
 
-# ⬇️ NEW: import the DB usage helper
+# ⬇️ DB usage helper & router
 from .metrics import get_db_usage
 from .metrics import router as metrics_router
 
@@ -86,16 +86,37 @@ class EvaluateOfferRequest(BaseModel):
     loadboard_rate: float
     carrier_offer: float
     round_num: int = 1
+    # passthroughs are handled inside the tool; not required on the API
 
 class EvaluateOfferResponse(BaseModel):
-    decision: str          # accept | counter | counter-final | reject
+    decision: str          # accept | counter | counter-final | reject | confirm-low
     counter_rate: float
     floor: float
     max_rounds: int
+    # helpers may be present from your negotiate module
+    # next_round_num: int
+    # next_prev_counter: Optional[float]
+    # next_anchor_high: Optional[float]
 
 class LogEventRequest(BaseModel):
     event: Optional[str] = None
     data: Optional[Dict[str, Any]] = None
+
+# Optional one-shot finalizer payload
+class FinalizePayload(BaseModel):
+    session_id: Optional[str] = None
+    mc_number: Optional[str] = None
+    selected_load_id: Optional[str] = None
+    agreed_rate: Optional[float] = None
+    last_offer: Optional[float] = None
+    rounds: Optional[int] = None
+    sentiment: Optional[str] = None            # 'positive' | 'neutral' | 'negative'
+    outcome: Optional[str] = None              # 'booked' | 'no-agreement' | 'no-match' | 'failed-auth' | 'abandoned'
+    equipment_type: Optional[str] = None
+    loadboard_rate: Optional[float] = None
+    offers: Optional[List[Dict[str, Any]]] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
+    transcript: Optional[List[Dict[str, Any]]] = None
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 def _avg(nums: List[float]) -> Optional[float]:
@@ -158,22 +179,19 @@ def evaluate_offer_ep(req: EvaluateOfferRequest):
     )
     return EvaluateOfferResponse(**res)
 
-# ── Logging & artifacts ────────────────────────────────────────────────────
+# ── Logging & artifacts (IDEMPOTENT for final outcomes) ────────────────────
 @app.post("/log_event", dependencies=[Depends(require_api_key)])
 def log_event(req: LogEventRequest):
     """
     Append a structured event to data/events.jsonl (audit) AND persist to DB.
+    Final outcome events are idempotent per session_id (no duplicates).
     """
     events_path = Path(__file__).resolve().parents[1] / "data" / "events.jsonl"
     events_path.parent.mkdir(parents=True, exist_ok=True)
 
     now = datetime.utcnow()
     data: Dict[str, Any] = req.data or {}
-    record = {
-        "ts": now.isoformat(),
-        "event": (req.event or "unspecified"),
-        "data": data,
-    }
+    record = {"ts": now.isoformat(), "event": (req.event or "unspecified"), "data": data}
 
     # Always keep a file audit trail
     with open(events_path, "a") as f:
@@ -184,6 +202,20 @@ def log_event(req: LogEventRequest):
 
     with get_session() as s:
         final_labels = {"booked", "no-agreement", "no-match", "failed-auth", "abandoned", "transfer_failed"}
+
+        # IDEMPOTENCY for final outcomes
+        if ev_name in final_labels and sid:
+            existing = s.exec(
+                select(Event).where(
+                    Event.session_id == sid,
+                    Event.event.in_(final_labels),
+                )
+            ).first()
+            if existing:
+                # We already have a terminal row for this session; keep the file audit and return.
+                s.commit()
+                return {"status": "ok", "written": False, "deduped": True}
+
         if ev_name in final_labels:
             event_for_row = "abandoned" if ev_name == "transfer_failed" else ev_name
             e = Event(
@@ -200,26 +232,31 @@ def log_event(req: LogEventRequest):
             )
             s.add(e)
 
+            # If a legacy 'quoted_rate' was sent on 'booked', record it as a carrier offer
             qrate = _to_float(data.get("quoted_rate"))
             if sid and qrate is not None:
                 s.add(Offer(session_id=sid, who="carrier", value=qrate, t=now))
 
+            # If agreed_rate exists on 'booked', add agent-side closing offer as well
             arate = _to_float(data.get("agreed_rate"))
             if sid and arate is not None:
                 s.add(Offer(session_id=sid, who="agent", value=arate, t=now))
 
+        # 2) Single 'offer' events (optional)
         if ev_name == "offer" and sid:
             who = (data.get("who") or "carrier").lower()
             val = _to_float(data.get("value"))
             if val is not None:
                 s.add(Offer(session_id=sid, who=who, value=val, t=now))
 
+        # 3) Single 'tool-call' events (optional)
         if ev_name == "tool-call" and sid:
             fn = data.get("fn") or "unknown"
             ok = data.get("ok")
             info = {k: v for k, v in data.items() if k not in {"session_id", "fn", "ok"}}
             s.add(ToolCall(session_id=sid, fn=fn, ok=bool(ok) if ok is not None else None, info=info))
 
+        # 4) Bulk artifacts: offers[], tool_calls[], transcript[] (preferred one-shot at call end)
         if ev_name == "final-artifacts" and sid:
             for o in (data.get("offers") or []):
                 val = _to_float(o.get("value"))
@@ -251,6 +288,7 @@ def log_event(req: LogEventRequest):
 
     return {"status": "ok", "written": True}
 
+# ── Health ─────────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -273,6 +311,64 @@ def health_db():
     except Exception:
         return {"ok": False}
 
+# ── NEW: Finalizer (idempotent) ────────────────────────────────────────────
+@app.post("/analytics/finalize", dependencies=[Depends(require_api_key)])
+def finalize_call(p: FinalizePayload):
+    """
+    Idempotent: if a final outcome exists for session_id, do nothing.
+    Else write one minimal final row so dashboards don't miss the call.
+    """
+    sid = (p.session_id or "").strip() or None
+    with get_session() as s:
+        if sid:
+            exists = s.exec(
+                select(Event).where(
+                    Event.session_id == sid,
+                    Event.event.in_({"booked","no-agreement","no-match","failed-auth","abandoned","transfer_failed"})
+                )
+            ).first()
+            if exists:
+                return {"status": "ok", "final_already_logged": True}
+
+        # pick outcome fallback
+        outcome = (p.outcome or ("booked" if p.agreed_rate else "no-agreement"))
+
+        e = Event(
+            event=outcome,
+            session_id=sid,
+            mc=p.mc_number,
+            load_id=p.selected_load_id,
+            sentiment=p.sentiment,
+            rounds=_to_int(p.rounds),
+            agreed_rate=_to_float(p.agreed_rate),
+            loadboard_rate=_to_float(p.loadboard_rate),
+            equipment_type=p.equipment_type,
+            extra={
+                "last_offer": p.last_offer,
+                "offers": p.offers or [],
+                "tool_calls": p.tool_calls or [],
+                "transcript_tail": p.transcript[-10:] if p.transcript else [],
+                "source": "finalizer",
+            },
+        )
+        s.add(e)
+
+        # Optional: persist artifacts in their own tables
+        if sid and p.offers:
+            for o in p.offers:
+                v = _to_float(o.get("value"))
+                if v is not None:
+                    s.add(Offer(session_id=sid, who=(o.get("who") or "carrier"), value=v))
+        if sid and p.tool_calls:
+            for tc in p.tool_calls:
+                fn = tc.get("fn") or "unknown"
+                ok = tc.get("ok")
+                info = {k: v for k, v in tc.items() if k not in {"fn", "ok"}}
+                s.add(ToolCall(session_id=sid, fn=fn, ok=bool(ok) if ok is not None else None, info=info))
+
+        s.commit()
+    return {"status": "ok", "final_logged": True}
+
 # ── Analytics & calls ──────────────────────────────────────────────────────
 @app.get("/analytics/summary", dependencies=[Depends(require_api_key)])
 def analytics_summary(
@@ -294,11 +390,13 @@ def analytics_summary(
             "timeseries": [],
         }
 
+    # Group by session
     sessions: dict[str, list[Event]] = defaultdict(list)
     for e in rows:
         sid = e.session_id or "unknown"
         sessions[sid].append(e)
 
+    # Totals
     alias = {
         "booked": "booked",
         "no-agreement": "no_agreement",
@@ -337,6 +435,7 @@ def analytics_summary(
         for k, v in by_eq.items()
     ]
 
+    # Timeseries by day
     ts = defaultdict(lambda: {"calls": 0, "booked": 0})
     for sid, evs in sessions.items():
         evs.sort(key=lambda x: x.ts)
@@ -387,7 +486,7 @@ def calls_list(
         items.append({
             "id": sid,
             "started_at": first.ts.isoformat(),
-            "duration_sec": 0,
+            "duration_sec": 0,  # TODO: populate if/when you log duration
             "mc_number": first.mc or last.mc,
             "selected_load_id": first.load_id or last.load_id,
             "agreed_rate": last.agreed_rate,
@@ -438,4 +537,5 @@ def call_detail(session_id: str):
         "tool_calls": [{"fn": t.fn, "ok": t.ok, **(t.info or {})} for t in tools],
     }
 
+# Mount metrics router behind auth
 app.include_router(metrics_router, dependencies=[Depends(require_api_key)])
