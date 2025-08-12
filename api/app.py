@@ -3,11 +3,10 @@ from fastapi import FastAPI, Header, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Union
-from datetime import datetime, date, time, timedelta
+from datetime import datetime, date, time
 from pathlib import Path
 from collections import defaultdict
 import json
-import asyncio
 import os
 
 from .config import API_KEY, ALLOW_ORIGINS
@@ -17,37 +16,32 @@ from .services.negotiate import evaluate_offer as eval_offer
 
 from .db import init_db, get_session
 from .models import Event, Offer, ToolCall, Utterance
-from sqlmodel import select, col
+from sqlmodel import select
 
-# ⬇️ DB usage helper & router
+# Watchdog runner (separate module)
+from .watchdog import start_watchdog, stop_watchdog
+
+# DB usage helper & router
 from .metrics import get_db_usage
 from .metrics import router as metrics_router
 
 app = FastAPI(title="HappyRobot Inbound API (Starter)")
 
-# ---------- Config (env-overridable) ----------
-WATCHDOG_ENABLED = os.getenv("WATCHDOG_ENABLED", "1") == "1"
-WATCHDOG_INTERVAL_SEC = int(os.getenv("WATCHDOG_INTERVAL_SEC", "60"))      # sweep cadence
-WATCHDOG_TTL_SEC = int(os.getenv("WATCHDOG_TTL_SEC", "180"))               # idle threshold to mark abandoned
-
 FINAL_LABELS = {"booked", "no-agreement", "no-match", "failed-auth", "abandoned", "transfer_failed"}
+
 
 # ── Startup / Shutdown ─────────────────────────────────────────────────────
 @app.on_event("startup")
 def _startup():
     init_db()
-    if WATCHDOG_ENABLED:
-        app.state._watchdog_task = asyncio.create_task(_watchdog_loop())
+    # Launch background watchdog (no-op if disabled via env inside watchdog.py)
+    app.state._watchdog_task = start_watchdog(app)
+
 
 @app.on_event("shutdown")
 async def _shutdown():
-    task = getattr(app.state, "_watchdog_task", None)
-    if task:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+    await stop_watchdog(getattr(app.state, "_watchdog_task", None))
+
 
 # ── CORS ───────────────────────────────────────────────────────────────────
 app.add_middleware(
@@ -58,6 +52,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # ── Auth dependency ────────────────────────────────────────────────────────
 def require_api_key(x_api_key: Optional[str] = Header(None)) -> None:
     """Require header: x-api-key: <API_KEY>"""
@@ -65,10 +60,12 @@ def require_api_key(x_api_key: Optional[str] = Header(None)) -> None:
         raise HTTPException(status_code=401, detail="Unauthorized")
     return None
 
+
 # ── Pydantic models ────────────────────────────────────────────────────────
 class VerifyMCRequest(BaseModel):
     mc_number: Union[str, int] = Field(..., description="Carrier MC (docket) number")
     mock: Optional[bool] = Field(False, description="If true, return simulated 'eligible' result")
+
 
 class VerifyMCResponse(BaseModel):
     mc_number: str
@@ -77,12 +74,14 @@ class VerifyMCResponse(BaseModel):
     safety_rating: Optional[str] = None
     source: str
 
+
 class SearchLoadsRequest(BaseModel):
     equipment_type: str
     origin: Optional[str] = None
     destination: Optional[str] = None
     pickup_window_start: Optional[str] = None
     pickup_window_end: Optional[str] = None
+
 
 class Load(BaseModel):
     load_id: str
@@ -99,16 +98,18 @@ class Load(BaseModel):
     miles: Optional[float] = None
     dimensions: Optional[str] = None
 
+
 class SearchLoadsResponse(BaseModel):
     results: List[Load]
+
 
 class EvaluateOfferRequest(BaseModel):
     load_id: str
     loadboard_rate: float
     carrier_offer: float
     round_num: int = 1
-    # passthroughs (session_id, prev_counter, anchor_high) are handled by the agent graph;
-    # we intentionally keep this minimal for backwards compatibility.
+    # passthroughs are handled by the agent graph; keep this minimal
+
 
 class EvaluateOfferResponse(BaseModel):
     decision: str          # accept | counter | counter-final | reject | confirm-low
@@ -116,12 +117,14 @@ class EvaluateOfferResponse(BaseModel):
     floor: float
     max_rounds: int
 
+
 class LogEventRequest(BaseModel):
     event: Optional[str] = None
     data: Optional[Dict[str, Any]] = None
 
-# Optional one-shot finalizer payload
+
 class FinalizePayload(BaseModel):
+    # Optional one-shot finalizer payload
     session_id: Optional[str] = None
     mc_number: Optional[str] = None
     selected_load_id: Optional[str] = None
@@ -136,19 +139,22 @@ class FinalizePayload(BaseModel):
     tool_calls: Optional[List[Dict[str, Any]]] = None
     transcript: Optional[List[Dict[str, Any]]] = None
 
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 def _avg(nums: List[float]) -> Optional[float]:
     if not nums:
         return None
     return round(sum(nums) / len(nums), 1)
 
+
 def _range_to_utc(s: str, u: str) -> tuple[datetime, datetime]:
     """since/until (YYYY-MM-DD) -> naive datetimes covering full days."""
     s_date = datetime.strptime(s, "%Y-%m-%d").date()
     u_date = datetime.strptime(u, "%Y-%m-%d").date()
     start = datetime.combine(s_date, time.min)
-    end   = datetime.combine(u_date, time.max)
+    end = datetime.combine(u_date, time.max)
     return start, end
+
 
 def _to_float(x: Any) -> Optional[float]:
     try:
@@ -158,6 +164,7 @@ def _to_float(x: Any) -> Optional[float]:
     except Exception:
         return None
 
+
 def _to_int(x: Any) -> Optional[int]:
     try:
         if x is None or str(x).strip() == "":
@@ -166,8 +173,10 @@ def _to_int(x: Any) -> Optional[int]:
     except Exception:
         return None
 
+
 def _now() -> datetime:
     return datetime.utcnow()
+
 
 # ── Core endpoints (with implicit logging where safe) ───────────────────────
 @app.post("/verify_mc", response_model=VerifyMCResponse, dependencies=[Depends(require_api_key)])
@@ -178,28 +187,26 @@ def verify_mc_endpoint(
     """
     Verify carrier MC eligibility (FMCSA or mock).
     If ineligible, write a final 'failed-auth' event (idempotent if later finalized).
+    Also write a lightweight 'activity' event when we see a session_id.
     """
     mc = str(req.mc_number)
     result = fmcsa.verify_mc(mc, mock=bool(req.mock))
 
-    # Opportunistic final logging when ineligible (no agent change needed)
     if not result.get("eligible"):
         _safe_write_final_event(
             event="failed-auth",
             session_id=(x_session_id or "").strip() or None,
-            payload={
-                "mc": mc,
-                "source": "implicit/verify_mc",
-            },
+            payload={"mc": mc, "source": "implicit/verify_mc"},
         )
     else:
-        # Lightweight heartbeat to help watchdog, only if we have a session_id
         if x_session_id:
             with get_session() as s:
                 s.add(ToolCall(session_id=x_session_id, fn="verify_mc", ok=True, info={"mc": mc}))
+                s.add(Event(event="activity", session_id=x_session_id, extra={"fn": "verify_mc"}))
                 s.commit()
 
     return VerifyMCResponse(**result)
+
 
 @app.post("/search_loads", response_model=SearchLoadsResponse, dependencies=[Depends(require_api_key)])
 def search_loads_endpoint(
@@ -208,7 +215,8 @@ def search_loads_endpoint(
 ):
     """
     Search loads from CSV with simple filters and return top results.
-    If 0 results, automatically log a 'no-match' final event (idempotent later).
+    If 0 results, automatically log a 'no-match' final event (idempotent).
+    Always write an 'activity' event if we have a session_id.
     """
     results = search_loads(
         equipment_type=req.equipment_type,
@@ -221,7 +229,6 @@ def search_loads_endpoint(
     loads = [Load(**r) for r in results]
 
     if x_session_id:
-        # Mark activity for watchdog regardless of match
         with get_session() as s:
             s.add(ToolCall(
                 session_id=x_session_id,
@@ -231,9 +238,10 @@ def search_loads_endpoint(
                     "equipment_type": req.equipment_type,
                     "origin": req.origin,
                     "destination": req.destination,
-                    "count": len(loads)
+                    "count": len(loads),
                 },
             ))
+            s.add(Event(event="activity", session_id=x_session_id, extra={"fn": "search_loads"}))
             s.commit()
 
     if len(loads) == 0:
@@ -250,14 +258,15 @@ def search_loads_endpoint(
 
     return SearchLoadsResponse(results=loads)
 
+
 @app.post("/evaluate_offer", response_model=EvaluateOfferResponse, dependencies=[Depends(require_api_key)])
 def evaluate_offer_ep(
     req: EvaluateOfferRequest,
     x_session_id: Optional[str] = Header(None),
 ):
     """
-    Evaluate an offer and also write Offers + ToolCall as heartbeat.
-    This gives us reliable session activity without changing the agent.
+    Evaluate an offer and also write Offers + ToolCall + 'activity' heartbeat.
+    This provides reliable session activity without changing the agent.
     """
     res = eval_offer(
         loadboard_rate=req.loadboard_rate,
@@ -265,11 +274,9 @@ def evaluate_offer_ep(
         round_num=req.round_num,
     )
 
-    # Heartbeat + price trail (if we have a session id)
     if x_session_id:
         now = _now()
         with get_session() as s:
-            # tool call record
             s.add(ToolCall(
                 session_id=x_session_id,
                 fn="evaluate_offer",
@@ -282,14 +289,15 @@ def evaluate_offer_ep(
                     "counter_rate": res.get("counter_rate"),
                 },
             ))
-            # offer trail — carrier ask then our counter (if present)
             s.add(Offer(session_id=x_session_id, who="carrier", value=float(req.carrier_offer), t=now))
             cr = _to_float(res.get("counter_rate"))
             if cr is not None:
                 s.add(Offer(session_id=x_session_id, who="agent", value=cr, t=now))
+            s.add(Event(event="activity", session_id=x_session_id, extra={"fn": "evaluate_offer"}))
             s.commit()
 
     return EvaluateOfferResponse(**res)
+
 
 # ── Logging & artifacts (IDEMPOTENT for final outcomes) ────────────────────
 @app.post("/log_event", dependencies=[Depends(require_api_key)])
@@ -305,7 +313,7 @@ def log_event(req: LogEventRequest):
     data: Dict[str, Any] = req.data or {}
     record = {"ts": now.isoformat(), "event": (req.event or "unspecified"), "data": data}
 
-    # Always keep a file audit trail
+    # File audit trail
     with open(events_path, "a") as f:
         f.write(json.dumps(record) + "\n")
 
@@ -361,6 +369,8 @@ def log_event(req: LogEventRequest):
             ok = data.get("ok")
             info = {k: v for k, v in data.items() if k not in {"session_id", "sessionId", "fn", "ok"}}
             s.add(ToolCall(session_id=sid, fn=fn, ok=bool(ok) if ok is not None else None, info=info))
+            # Also mark activity so watchdog has a timestamp even for tool-only sessions
+            s.add(Event(event="activity", session_id=sid, extra={"fn": fn}))
 
         if ev_name == "final-artifacts" and sid:
             for o in (data.get("offers") or []):
@@ -382,6 +392,7 @@ def log_event(req: LogEventRequest):
                 ok = tc.get("ok")
                 info = {k: v for k, v in tc.items() if k not in {"fn", "ok"}}
                 s.add(ToolCall(session_id=sid, fn=fn, ok=bool(ok) if ok is not None else None, info=info))
+                s.add(Event(event="activity", session_id=sid, extra={"fn": fn}))
 
             for line in (data.get("transcript") or []):
                 role = (line.get("role") or "user").lower()
@@ -393,10 +404,12 @@ def log_event(req: LogEventRequest):
 
     return {"status": "ok", "written": True}
 
+
 # ── Health ─────────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
 
 # ── DB usage (analytics) ───────────────────────────────────────────────────
 @app.get("/analytics/db_usage", dependencies=[Depends(require_api_key)])
@@ -407,6 +420,7 @@ def analytics_db_usage():
     """
     return get_db_usage()
 
+
 # (Optional public health variant without auth)
 @app.get("/health/db")
 def health_db():
@@ -415,6 +429,7 @@ def health_db():
         return {"ok": True, "percent_used": usage.get("percent_used"), "driver": usage.get("driver")}
     except Exception:
         return {"ok": False}
+
 
 # ── Finalizer (idempotent) ────────────────────────────────────────────────
 @app.post("/analytics/finalize", dependencies=[Depends(require_api_key)])
@@ -472,6 +487,7 @@ def finalize_call(p: FinalizePayload):
 
         s.commit()
     return {"status": "ok", "final_logged": True}
+
 
 # ── Analytics & calls ──────────────────────────────────────────────────────
 @app.get("/analytics/summary", dependencies=[Depends(require_api_key)])
@@ -565,6 +581,7 @@ def analytics_summary(
         "timeseries": timeseries,
     }
 
+
 @app.get("/calls", dependencies=[Depends(require_api_key)])
 def calls_list(
     since: str = Query(..., description="YYYY-MM-DD"),
@@ -602,6 +619,7 @@ def calls_list(
     items.sort(key=lambda r: r["started_at"], reverse=True)
     total = len(items)
     return {"items": items[offset:offset + limit], "total": total}
+
 
 @app.get("/calls/{session_id}", dependencies=[Depends(require_api_key)])
 def call_detail(session_id: str):
@@ -641,8 +659,10 @@ def call_detail(session_id: str):
         "tool_calls": [{"fn": t.fn, "ok": t.ok, **(t.info or {})} for t in tools],
     }
 
+
 # Mount metrics router behind auth
 app.include_router(metrics_router, dependencies=[Depends(require_api_key)])
+
 
 # ── Internal helpers ───────────────────────────────────────────────────────
 def _safe_write_final_event(event: str, session_id: Optional[str], payload: Dict[str, Any]):
@@ -668,70 +688,3 @@ def _safe_write_final_event(event: str, session_id: Optional[str], payload: Dict
             extra={**payload, "implicit": True},
         ))
         s.commit()
-
-async def _watchdog_loop():
-    """
-    Periodically mark sessions as 'abandoned' if they've had activity (offers/toolcalls/utterances)
-    but no final event after WATCHDOG_TTL_SEC.
-    """
-    while True:
-        try:
-            await asyncio.sleep(WATCHDOG_INTERVAL_SEC)
-            cutoff = _now() - timedelta(seconds=WATCHDOG_TTL_SEC)
-            with get_session() as s:
-                # Collect candidate session_ids from Offers / ToolCalls / Utterances
-                sid_set: set[str] = set()
-
-                # Offers have a reliable timestamp 't'
-                offer_sids = s.exec(
-                    select(Offer.session_id).where(Offer.session_id.is_not(None)).distinct()
-                ).all()
-                sid_set.update([sid for (sid,) in offer_sids if sid])
-
-                # ToolCalls may not have a 't' column; still use as signal for existence
-                tc_sids = s.exec(
-                    select(ToolCall.session_id).where(ToolCall.session_id.is_not(None)).distinct()
-                ).all()
-                sid_set.update([sid for (sid,) in tc_sids if sid])
-
-                # Utterances (if used)
-                utt_sids = s.exec(
-                    select(Utterance.session_id).where(Utterance.session_id.is_not(None)).distinct()
-                ).all()
-                sid_set.update([sid for (sid,) in utt_sids if sid])
-
-                for sid in sid_set:
-                    # Skip if already finalized
-                    final = s.exec(
-                        select(Event).where(Event.session_id == sid, Event.event.in_(FINAL_LABELS))
-                    ).first()
-                    if final:
-                        continue
-
-                    # Determine last activity time (prefer Offer.t, else last Event.ts)
-                    last_offer = s.exec(
-                        select(Offer).where(Offer.session_id == sid).order_by(Offer.t.desc()).limit(1)
-                    ).first()
-                    last_event = s.exec(
-                        select(Event).where(Event.session_id == sid).order_by(Event.ts.desc()).limit(1)
-                    ).first()
-
-                    last_ts: Optional[datetime] = None
-                    if last_offer and last_offer.t:
-                        last_ts = last_offer.t
-                    if last_event and last_event.ts and (last_ts is None or last_event.ts > last_ts):
-                        last_ts = last_event.ts
-
-                    if not last_ts:
-                        continue
-
-                    if last_ts <= cutoff:
-                        # Synthesize a single 'abandoned' row
-                        s.add(Event(event="abandoned", session_id=sid, extra={"source": "watchdog"}))
-                s.commit()
-
-        except asyncio.CancelledError:
-            break
-        except Exception:
-            # Swallow watchdog errors to avoid crashing the app
-            continue
