@@ -17,6 +17,9 @@ from .db import init_db, get_session
 from .models import Event, Offer, ToolCall, Utterance
 from sqlmodel import select
 
+# ⬇️ NEW: import the DB usage helper
+from .metrics import get_db_usage
+
 app = FastAPI(title="HappyRobot Inbound API (Starter)")
 
 # ── Startup ────────────────────────────────────────────────────────────────
@@ -159,15 +162,6 @@ def evaluate_offer_ep(req: EvaluateOfferRequest):
 def log_event(req: LogEventRequest):
     """
     Append a structured event to data/events.jsonl (audit) AND persist to DB.
-
-    Accepts:
-      - event: 'booked' | 'no-agreement' | 'no-match' | 'failed-auth' | 'abandoned'
-               plus optional: 'offer', 'tool-call', 'final-artifacts'
-      - data: free-form payload; we look for keys like:
-              session_id, mc, load_id, sentiment, rounds, agreed_rate, loadboard_rate, equipment_type
-              and arrays: offers[], tool_calls[], transcript[] (when event = final-artifacts)
-
-    Also tolerates legacy keys like 'quoted_rate' (we'll store as a carrier offer step).
     """
     events_path = Path(__file__).resolve().parents[1] / "data" / "events.jsonl"
     events_path.parent.mkdir(parents=True, exist_ok=True)
@@ -188,10 +182,8 @@ def log_event(req: LogEventRequest):
     sid = (data.get("session_id") or data.get("sessionId") or "").strip() or None
 
     with get_session() as s:
-        # 1) Final outcome rows → feed analytics/dashboard
         final_labels = {"booked", "no-agreement", "no-match", "failed-auth", "abandoned", "transfer_failed"}
         if ev_name in final_labels:
-            # map transfer_failed into abandoned for analytics later
             event_for_row = "abandoned" if ev_name == "transfer_failed" else ev_name
             e = Event(
                 event=event_for_row,
@@ -207,31 +199,26 @@ def log_event(req: LogEventRequest):
             )
             s.add(e)
 
-            # If a legacy 'quoted_rate' was sent on 'booked', record it as a carrier offer
             qrate = _to_float(data.get("quoted_rate"))
             if sid and qrate is not None:
                 s.add(Offer(session_id=sid, who="carrier", value=qrate, t=now))
 
-            # If agreed_rate exists on 'booked', add agent-side closing offer as well
             arate = _to_float(data.get("agreed_rate"))
             if sid and arate is not None:
                 s.add(Offer(session_id=sid, who="agent", value=arate, t=now))
 
-        # 2) Single 'offer' events (optional, if you choose to emit during negotiation)
         if ev_name == "offer" and sid:
             who = (data.get("who") or "carrier").lower()
             val = _to_float(data.get("value"))
             if val is not None:
                 s.add(Offer(session_id=sid, who=who, value=val, t=now))
 
-        # 3) Single 'tool-call' events (optional)
         if ev_name == "tool-call" and sid:
             fn = data.get("fn") or "unknown"
             ok = data.get("ok")
             info = {k: v for k, v in data.items() if k not in {"session_id", "fn", "ok"}}
             s.add(ToolCall(session_id=sid, fn=fn, ok=bool(ok) if ok is not None else None, info=info))
 
-        # 4) Bulk artifacts: offers[], tool_calls[], transcript[] (preferred one-shot at call end)
         if ev_name == "final-artifacts" and sid:
             for o in (data.get("offers") or []):
                 val = _to_float(o.get("value"))
@@ -267,6 +254,24 @@ def log_event(req: LogEventRequest):
 def health():
     return {"status": "ok"}
 
+# ── NEW: DB usage (analytics) ──────────────────────────────────────────────
+@app.get("/analytics/db_usage", dependencies=[Depends(require_api_key)])
+def analytics_db_usage():
+    """
+    Returns current DB size/limit/percent used, table sizes, and last event time.
+    Used by the Dashboard 'Data Source' card.
+    """
+    return get_db_usage()
+
+# (Optional public health variant without auth)
+@app.get("/health/db")
+def health_db():
+    try:
+        usage = get_db_usage()
+        return {"ok": True, "percent_used": usage.get("percent_used"), "driver": usage.get("driver")}
+    except Exception:
+        return {"ok": False}
+
 # ── Analytics & calls ──────────────────────────────────────────────────────
 @app.get("/analytics/summary", dependencies=[Depends(require_api_key)])
 def analytics_summary(
@@ -288,13 +293,11 @@ def analytics_summary(
             "timeseries": [],
         }
 
-    # Group by session
     sessions: dict[str, list[Event]] = defaultdict(list)
     for e in rows:
         sid = e.session_id or "unknown"
         sessions[sid].append(e)
 
-    # Totals
     alias = {
         "booked": "booked",
         "no-agreement": "no_agreement",
@@ -333,7 +336,6 @@ def analytics_summary(
         for k, v in by_eq.items()
     ]
 
-    # Timeseries by day
     ts = defaultdict(lambda: {"calls": 0, "booked": 0})
     for sid, evs in sessions.items():
         evs.sort(key=lambda x: x.ts)
@@ -384,7 +386,7 @@ def calls_list(
         items.append({
             "id": sid,
             "started_at": first.ts.isoformat(),
-            "duration_sec": 0,  # TODO: populate if/when you log duration
+            "duration_sec": 0,
             "mc_number": first.mc or last.mc,
             "selected_load_id": first.load_id or last.load_id,
             "agreed_rate": last.agreed_rate,
@@ -416,7 +418,6 @@ def call_detail(session_id: str):
             select(Utterance).where(Utterance.session_id == session_id).order_by(Utterance.id.asc())
         ))
 
-    # Earliest timestamp across artifacts
     earliest = first.ts
     if offers:
         earliest = min(earliest, offers[0].t)
