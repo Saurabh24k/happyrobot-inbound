@@ -2,46 +2,45 @@
 import axios, { AxiosHeaders } from 'axios';
 import type { AxiosError, InternalAxiosRequestConfig } from 'axios';
 
+declare global {
+  interface Window {
+    RUNTIME_CONFIG?: { API_BASE_URL?: string; API_KEY?: string };
+  }
+}
+
 const LS_API_BASE = 'apiBase';
 const LS_API_KEY = 'apiKey';
 
-declare global {
-  interface Window {
-    RUNTIME_CONFIG?: {
-      API_BASE_URL?: string;
-      API_KEY?: string;
-    };
-  }
-}
-
-function fromRuntime(k: keyof NonNullable<Window['RUNTIME_CONFIG']>): string {
-  try {
-    return (window.RUNTIME_CONFIG?.[k] ?? '').toString();
-  } catch {
-    return '';
-  }
+function fromRuntime(key: 'API_BASE_URL' | 'API_KEY'): string {
+  return (window.RUNTIME_CONFIG?.[key] ?? '').trim();
 }
 
 export function getApiBase(): string {
-  // Priority: localStorage → runtime-config.js → build-time VITE_ → ''
-  const ls = (window.localStorage.getItem(LS_API_BASE) ?? '').trim();
-  const runtime = fromRuntime('API_BASE_URL').trim();
-  const env = (import.meta.env.VITE_API_BASE_URL ?? '').trim();
+  // 1) localStorage override (strongest)
+  const ls = (localStorage.getItem(LS_API_BASE) ?? '').trim();
+  if (ls) return ls.replace(/\/+$/, '');
 
-  const candidate = ls || runtime || env || '';
-  return candidate.replace(/\/+$/, ''); // strip trailing slashes
+  // 2) runtime-config.js injected by nginx entrypoint
+  const runtime = fromRuntime('API_BASE_URL');
+  if (runtime) return runtime.replace(/\/+$/, '');
+
+  // 3) Vite env (build-time)
+  const env = (import.meta.env.VITE_API_BASE_URL ?? '').trim();
+  return env.replace(/\/+$/, '');
 }
 
 export function getApiKey(): string {
-  // Priority: localStorage (if not blank/null/undefined) → runtime-config.js → build-time VITE_
-  const lsRaw = window.localStorage.getItem(LS_API_KEY);
-  const cleaned = (lsRaw ?? '').trim().toLowerCase();
-  const useLs = cleaned.length > 0 && cleaned !== 'null' && cleaned !== 'undefined';
+  // 1) localStorage override (strongest)
+  const lsRaw = localStorage.getItem(LS_API_KEY);
+  const ls = (lsRaw ?? '').trim();
+  if (ls && ls.toLowerCase() !== 'null' && ls.toLowerCase() !== 'undefined') return ls;
 
-  const runtime = fromRuntime('API_KEY').trim();
-  const env = (import.meta.env.VITE_API_KEY ?? '').trim();
+  // 2) runtime-config.js
+  const runtime = fromRuntime('API_KEY');
+  if (runtime) return runtime;
 
-  return (useLs ? (lsRaw as string) : (runtime || env)).trim();
+  // 3) Vite env
+  return (import.meta.env.VITE_API_KEY ?? '').trim();
 }
 
 export const api = axios.create({
@@ -50,7 +49,6 @@ export const api = axios.create({
 });
 
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
-  // Refresh baseURL each request in case user changed Settings or runtime-config loaded late
   config.baseURL = getApiBase();
 
   const headers =
@@ -61,6 +59,7 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const key = getApiKey();
   if (key) headers.set('x-api-key', key);
 
+  // Only set Content-Type when there’s a body
   const method = (config.method || 'get').toLowerCase();
   if (method !== 'get' && method !== 'head') {
     headers.set('Content-Type', 'application/json');
@@ -88,7 +87,7 @@ api.interceptors.response.use(
       try {
         alert('Session invalid. Please enter your API key again.');
       } catch {}
-      window.location.href = '/settings';
+      window.location.assign('/settings');
     }
     return Promise.reject(err);
   }
