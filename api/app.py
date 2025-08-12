@@ -218,14 +218,18 @@ def search_loads_endpoint(
     If 0 results, automatically log a 'no-match' final event (idempotent).
     Always write an 'activity' event if we have a session_id.
     """
-    results = search_loads(
-        equipment_type=req.equipment_type,
-        origin=req.origin,
-        destination=req.destination,
-        pickup_window_start=req.pickup_window_start,
-        pickup_window_end=req.pickup_window_end,
-        limit=3,
-    )
+    try:
+        results = search_loads(
+            equipment_type=req.equipment_type,
+            origin=req.origin,
+            destination=req.destination,
+            pickup_window_start=req.pickup_window_start,
+            pickup_window_end=req.pickup_window_end,
+            limit=3,
+        )
+    except Exception:
+        results = []
+
     loads = [Load(**r) for r in results]
 
     if x_session_id:

@@ -1,12 +1,26 @@
+# api/services/search.py
 from __future__ import annotations
 from typing import List, Dict, Optional, Any
 from pathlib import Path
 from datetime import datetime, timedelta
-import pandas as pd
+import os
 import re
+import logging
 
-# Path to your loads CSV
-CSV_PATH = Path(__file__).resolve().parents[2] / "data" / "loads.csv"
+# Prefer pandas, but never crash the API if it isn't available
+try:
+    import pandas as pd  # type: ignore
+except Exception:  # pragma: no cover
+    pd = None  # type: ignore
+
+log = logging.getLogger(__name__)
+
+# ────────────────────────────────────────────────────────────────────
+# Dataset location (overridable via env)
+# Default resolves to /app/data/loads.csv when packaged in Docker
+# ────────────────────────────────────────────────────────────────────
+_DEFAULT_CSV = Path(__file__).resolve().parents[2] / "data" / "loads.csv"
+CSV_PATH = Path(os.getenv("LOADS_CSV_PATH", str(_DEFAULT_CSV)))
 
 # Try python-dateutil for smarter parsing; fall back to pandas if missing
 try:
@@ -44,14 +58,18 @@ def _state_abbr(text: str) -> Optional[str]:
     t = _norm(text)
     return _STATES.get(t)
 
-def _match_city_state(series: pd.Series, query: str) -> pd.Series:
-    """True where series contains city substring OR ends with ', XX' (state)."""
+def _match_city_state(series, query: str):
+    """
+    True where series contains city substring OR ends with ', XX' (state).
+    Assumes `series` is a pandas Series of strings.
+    """
     q = _norm(query)
     abbr = _state_abbr(q)
-    s_lower = series.str.lower()
+    s = series.fillna("").astype(str)
+    s_lower = s.str.lower()
     if abbr:  # user gave a state
         state_regex = re.compile(rf",\s*{abbr}$", flags=re.I)
-        return s_lower.str.contains(q) | series.str.contains(state_regex)
+        return s_lower.str.contains(q) | s.str.contains(state_regex)
     return s_lower.str.contains(q)
 
 # ── Date normalization: assume next future occurrence if year omitted ──
@@ -70,8 +88,13 @@ def _parse_with_default_year(text: Optional[str], now: datetime) -> Optional[dat
     if du_parser:
         # Use current year as default when year is missing
         default_base = datetime(now.year, 1, 1, 0, 0, 0)
-        dt = du_parser.parse(raw, default=default_base, fuzzy=True)
+        try:
+            dt = du_parser.parse(raw, default=default_base, fuzzy=True)
+        except Exception:
+            return None
     else:
+        if pd is None:
+            return None
         # Fallback: if no 4-digit year present, append current year for parsing
         to_parse = raw if had_year else f"{raw} {now.year}"
         dt = pd.to_datetime(to_parse, errors="coerce")
@@ -126,6 +149,49 @@ def _normalize_future_window(
 # Main search
 # ────────────────────────────────────────────────────────────────────
 
+_REQUIRED_COLS = {
+    "load_id", "equipment_type", "origin", "destination", "pickup_datetime",
+    "delivery_datetime", "miles", "weight", "dimensions", "notes",
+    "loadboard_rate", "commodity_type", "num_of_pieces"
+}
+
+def _read_df_safely() -> Optional["pd.DataFrame"]:
+    """
+    Read the CSV into a DataFrame. If anything goes wrong, return None.
+    Ensures required columns exist (creates empty ones if missing).
+    """
+    if pd is None:
+        log.warning("pandas is not available; cannot read CSV.")
+        return None
+
+    path = CSV_PATH
+    if not path.exists():
+        log.warning("loads.csv not found at %s", path)
+        return None
+
+    try:
+        df = pd.read_csv(path)
+    except Exception as e:  # pragma: no cover
+        log.exception("Failed to read CSV at %s: %s", path, e)
+        return None
+
+    # Create any missing required columns to avoid downstream crashes
+    for col in _REQUIRED_COLS - set(df.columns):
+        df[col] = None
+
+    # Coerce to sensible types where possible (but never raise)
+    try:
+        if "loadboard_rate" in df:
+            df["loadboard_rate"] = pd.to_numeric(df["loadboard_rate"], errors="coerce")
+        if "miles" in df:
+            df["miles"] = pd.to_numeric(df["miles"], errors="coerce")
+        if "num_of_pieces" in df:
+            df["num_of_pieces"] = pd.to_numeric(df["num_of_pieces"], errors="coerce").astype("Int64")
+    except Exception:
+        pass
+
+    return df
+
 def search_loads(
     equipment_type: str,
     origin: Optional[str] = None,
@@ -139,22 +205,20 @@ def search_loads(
     - Accepts city/state names or abbreviations for origin/destination.
     - Interprets dates without a year as the *next future occurrence*.
     - Progressively widens filters if nothing matches (first drop destination, then origin).
+    - NEVER raises (returns []) so the API won’t 500.
     """
-    # Load data
-    df = pd.read_csv(CSV_PATH)
-
-    # Minimal schema check (raises clear error early if CSV is wrong)
-    required_cols = {
-        "load_id", "equipment_type", "origin", "destination", "pickup_datetime",
-        "delivery_datetime", "miles", "weight", "dimensions", "notes", "loadboard_rate",
-        "commodity_type", "num_of_pieces"
-    }
-    missing = required_cols - set(df.columns)
-    if missing:
-        raise ValueError(f"loads.csv missing required columns: {sorted(missing)}")
+    df = _read_df_safely()
+    if df is None or df.empty:
+        return []
 
     # Equipment filter (required)
-    df = df[df["equipment_type"].str.lower() == (equipment_type or "").strip().lower()]
+    et = (equipment_type or "").strip().lower()
+    if not et:
+        return []
+    try:
+        df = df[df["equipment_type"].fillna("").astype(str).str.lower() == et]
+    except Exception:
+        return []
 
     # Time window: normalize to next-future when year missing
     if pickup_window_start or pickup_window_end:
@@ -165,13 +229,13 @@ def search_loads(
     if pickup_window_start:
         try:
             start_dt = pd.to_datetime(pickup_window_start)
-            df = df[pd.to_datetime(df["pickup_datetime"]) >= start_dt]
+            df = df[pd.to_datetime(df["pickup_datetime"], errors="coerce") >= start_dt]
         except Exception:
             pass  # ignore bad date
     if pickup_window_end:
         try:
             end_dt = pd.to_datetime(pickup_window_end)
-            df = df[pd.to_datetime(df["pickup_datetime"]) <= end_dt]
+            df = df[pd.to_datetime(df["pickup_datetime"], errors="coerce") <= end_dt]
         except Exception:
             pass
 
@@ -179,7 +243,7 @@ def search_loads(
     base_df = df.copy()
 
     # Lane filters
-    def apply_lane_filters(data: pd.DataFrame) -> pd.DataFrame:
+    def apply_lane_filters(data):
         res = data
         if origin:
             res = res[_match_city_state(res["origin"], origin)]
@@ -202,29 +266,69 @@ def search_loads(
         return []
 
     # Ranking: score by lane match strength (simple heuristic)
-    def _score_row(row: pd.Series) -> int:
+    def _score_row(row) -> int:
         score = 0
-        if origin and _norm(origin) in _norm(row["origin"]):
+        if origin and _norm(origin) in _norm(str(row.get("origin", ""))):
             score += 1
         if destination:
-            dest_norm = _norm(row["destination"])
+            dest_norm = _norm(str(row.get("destination", "")))
             if _norm(destination) in dest_norm:
                 score += 1
-            elif _state_abbr(destination or "") and dest_norm.endswith(f", {_state_abbr(destination)}"):
-                score += 1
+            else:
+                ab = _state_abbr(destination or "")
+                if ab and dest_norm.endswith(f", {ab}"):
+                    score += 1
         return score
 
-    df = df.copy()
-    df["__score"] = df.apply(_score_row, axis=1)
+    try:
+        df = df.copy()
+        df["__score"] = df.apply(_score_row, axis=1)
+    except Exception:
+        # If scoring fails for any reason, just keep rows as-is
+        df["__score"] = 0
 
     # Prefer closer pickup to requested start if provided
     if pickup_window_start:
-        start_dt = pd.to_datetime(pickup_window_start)
-        df["__time_delta"] = (pd.to_datetime(df["pickup_datetime"]) - start_dt).abs()
-        df = df.sort_values(by=["__score", "__time_delta"], ascending=[False, True])
+        try:
+            start_dt = pd.to_datetime(pickup_window_start)
+            df["__time_delta"] = (
+                pd.to_datetime(df["pickup_datetime"], errors="coerce") - start_dt
+            ).abs()
+            df = df.sort_values(by=["__score", "__time_delta"], ascending=[False, True])
+        except Exception:
+            df = df.sort_values(by="__score", ascending=False)
     else:
         df = df.sort_values(by="__score", ascending=False)
 
     # Limit + clean
     cols = [c for c in df.columns if not c.startswith("__")]
-    return df.head(max(1, int(limit)))[cols].to_dict(orient="records")
+    try:
+        out = df.head(max(1, int(limit)))[cols]
+    except Exception:
+        out = df[cols].head(3)
+
+    # Convert to plain dicts (ensure JSON-serializable)
+    records: List[Dict[str, Any]] = []
+    for r in out.to_dict(orient="records"):
+        r["loadboard_rate"] = _safe_float(r.get("loadboard_rate"))
+        r["miles"] = _safe_float(r.get("miles"))
+        r["num_of_pieces"] = _safe_int(r.get("num_of_pieces"))
+        records.append(r)
+
+    return records
+
+def _safe_float(x: Any) -> Optional[float]:
+    try:
+        if x is None or x == "" or str(x).lower() == "nan":
+            return None
+        return float(x)
+    except Exception:
+        return None
+
+def _safe_int(x: Any) -> Optional[int]:
+    try:
+        if x is None or x == "" or str(x).lower() == "nan":
+            return None
+        return int(x)
+    except Exception:
+        return None

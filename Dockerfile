@@ -1,17 +1,23 @@
+# api/Dockerfile
 FROM python:3.11-slim
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 
-# Install deps (better cache)
-COPY api/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+# deps
+COPY api/requirements.txt requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the backend as a package at /app/api
+# app code as a proper package
 COPY api /app/api
+# include data directory!
+COPY data /app/data
 
-# In case __init__.py is missing, make it a package anyway
+# ensure package import works
 RUN [ -f /app/api/__init__.py ] || touch /app/api/__init__.py
 
-# Render assigns $PORT; default to 10000 for local runs
+# point search service to the CSV in the image
+ENV LOADS_CSV_PATH=/app/data/loads.csv
+
 EXPOSE 10000
-CMD ["sh","-c","gunicorn -k uvicorn.workers.UvicornWorker -b 0.0.0.0:${PORT:-10000} api.app:app --timeout 120"]
+# NOTE: app import path uses the package now
+CMD ["gunicorn","-k","uvicorn.workers.UvicornWorker","-b","0.0.0.0:10000","api.app:app","--timeout","120"]
