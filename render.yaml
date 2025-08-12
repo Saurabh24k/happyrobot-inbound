@@ -1,18 +1,18 @@
 services:
-  # --- API ---
+  # --- Backend (reuse your existing service name & layout) ---
   - type: web
-    name: inbound-api
+    name: happyrobot-inbound          # <- matches the service you already have
     env: docker
-    rootDir: api
-    dockerfilePath: api/Dockerfile
+    rootDir: .                        # <- root of repo
+    dockerfilePath: Dockerfile        # <- root Dockerfile you used
     plan: free
     autoDeploy: true
     healthCheckPath: /health
     envVars:
       - key: API_KEY
-        sync: false         # set in Render UI or Env Group (secret)
+        sync: false                   # set in Render UI when blueprint asks
       - key: ALLOW_ORIGINS
-        value: https://inbound-frontend.onrender.com
+        value: "*"                    # quick win; tighten to frontend URL later
       - key: WATCHDOG_ENABLED
         value: "1"
       - key: WATCHDOG_INTERVAL_SEC
@@ -20,7 +20,7 @@ services:
       - key: WATCHDOG_TTL_SEC
         value: "180"
 
-  # --- Frontend ---
+  # --- Frontend (Dockerized Vite + Nginx) ---
   - type: web
     name: inbound-frontend
     env: docker
@@ -30,8 +30,7 @@ services:
     autoDeploy: true
     healthCheckPath: /
     envVars:
-      # These are injected at runtime by docker-entrypoint.sh to /config.js
       - key: API_BASE_URL
-        value: https://inbound-api.onrender.com
+        value: https://happyrobot-inbound.onrender.com   # <- your live backend URL
       - key: API_KEY
-        sync: false         # set in Render UI or Env Group (it will be exposed client-side)
+        sync: false   # set same value as backend API_KEY (exposed client-side)

@@ -1,17 +1,14 @@
-#!/usr/bin/env bash
-set -e
+#!/usr/bin/env sh
+set -eu
 
-# Generate runtime config.js for the SPA
-cat >/usr/share/nginx/html/config.js <<'EOF'
-window.__ENV__ = {
-  API_BASE_URL: "${API_BASE_URL}",
-  API_KEY: "${API_KEY}"
-};
-EOF
+# Default PORT to 8080 locally if not provided
+: "${PORT:=8080}"
 
-# Show what got injected (useful in logs)
-echo "[config] API_BASE_URL=${API_BASE_URL}"
-echo "[config] API_KEY set? $([[ -n "${API_KEY}" ]] && echo yes || echo no)"
+# Substitute env vars into the nginx template
+envsubst '${PORT} ${API_BASE_URL} ${API_KEY}' \
+  < /etc/nginx/conf.d/default.conf \
+  > /etc/nginx/conf.d/default.conf.out
 
-# Run nginx in foreground
+mv /etc/nginx/conf.d/default.conf.out /etc/nginx/conf.d/default.conf
+
 exec nginx -g 'daemon off;'
