@@ -19,6 +19,7 @@ from sqlmodel import select
 
 # ⬇️ NEW: import the DB usage helper
 from .metrics import get_db_usage
+from .metrics import router as metrics_router
 
 app = FastAPI(title="HappyRobot Inbound API (Starter)")
 
@@ -436,3 +437,5 @@ def call_detail(session_id: str):
         "transcript": [{"role": l.role, "text": l.text} for l in lines],
         "tool_calls": [{"fn": t.fn, "ok": t.ok, **(t.info or {})} for t in tools],
     }
+
+app.include_router(metrics_router, dependencies=[Depends(require_api_key)])
