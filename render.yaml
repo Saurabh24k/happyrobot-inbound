@@ -1,0 +1,37 @@
+services:
+  # --- API ---
+  - type: web
+    name: inbound-api
+    env: docker
+    rootDir: api
+    dockerfilePath: api/Dockerfile
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: API_KEY
+        sync: false         # set in Render UI or Env Group (secret)
+      - key: ALLOW_ORIGINS
+        value: https://inbound-frontend.onrender.com
+      - key: WATCHDOG_ENABLED
+        value: "1"
+      - key: WATCHDOG_INTERVAL_SEC
+        value: "60"
+      - key: WATCHDOG_TTL_SEC
+        value: "180"
+
+  # --- Frontend ---
+  - type: web
+    name: inbound-frontend
+    env: docker
+    rootDir: ics-frontend
+    dockerfilePath: ics-frontend/Dockerfile
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /
+    envVars:
+      # These are injected at runtime by docker-entrypoint.sh to /config.js
+      - key: API_BASE_URL
+        value: https://inbound-api.onrender.com
+      - key: API_KEY
+        sync: false         # set in Render UI or Env Group (it will be exposed client-side)

@@ -1,0 +1,18 @@
+server {
+  listen 0.0.0.0:8080;
+  server_name _;
+
+  root   /usr/share/nginx/html;
+  index  index.html;
+
+  # JS runtime config
+  location = /config.js {
+    default_type application/javascript;
+    try_files /config.js =404;
+  }
+
+  # Support client-side routing
+  location / {
+    try_files $uri /index.html;
+  }
+}

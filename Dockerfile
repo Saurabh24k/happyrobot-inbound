@@ -1,15 +1,9 @@
-# Dockerfile
 FROM python:3.11-slim
-
 WORKDIR /app
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-COPY requirements.txt .
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+COPY api/requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-EXPOSE 8000
-
-CMD ["sh", "-c", "uvicorn api.app:app --host 0.0.0.0 --port ${PORT:-8000}"]
+COPY api /app
+# Gunicorn+Uvicorn
+EXPOSE 10000
+CMD ["gunicorn","-k","uvicorn.workers.UvicornWorker","-b","0.0.0.0:10000","app:app","--timeout","120"]
