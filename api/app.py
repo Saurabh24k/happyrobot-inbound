@@ -64,7 +64,8 @@ def require_api_key(x_api_key: Optional[str] = Header(None)) -> None:
 # ── Pydantic models ────────────────────────────────────────────────────────
 class VerifyMCRequest(BaseModel):
     mc_number: Union[str, int] = Field(..., description="Carrier MC (docket) number")
-    mock: Optional[bool] = Field(False, description="If true, return simulated 'eligible' result")
+    # Accept bool OR string because some platforms send "true"/"false" as strings
+    mock: Optional[Union[bool, str]] = Field(None, description="Force mock for testing")
 
 
 class VerifyMCResponse(BaseModel):
@@ -141,6 +142,14 @@ class FinalizePayload(BaseModel):
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
+def _is_truthy(v) -> bool:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        return v.strip().lower() in {"1", "true", "yes", "y"}
+    return False
+
+
 def _avg(nums: List[float]) -> Optional[float]:
     if not nums:
         return None
@@ -189,8 +198,15 @@ def verify_mc_endpoint(
     If ineligible, write a final 'failed-auth' event (idempotent if later finalized).
     Also write a lightweight 'activity' event when we see a session_id.
     """
-    mc = str(req.mc_number)
-    result = fmcsa.verify_mc(mc, mock=bool(req.mock))
+    mc = str(req.mc_number).strip()
+
+    # ---- gating logic: mock for demo MC or explicit override, or when no key is configured
+    demo_mock = (mc == "123456")
+    override_mock = _is_truthy(req.mock)
+    missing_key_mock = (not fmcsa.FMCSA_API_KEY)
+    use_mock = demo_mock or override_mock or missing_key_mock
+
+    result = fmcsa.verify_mc(mc, mock=use_mock)
 
     if not result.get("eligible"):
         _safe_write_final_event(
@@ -201,7 +217,12 @@ def verify_mc_endpoint(
     else:
         if x_session_id:
             with get_session() as s:
-                s.add(ToolCall(session_id=x_session_id, fn="verify_mc", ok=True, info={"mc": mc}))
+                s.add(ToolCall(
+                    session_id=x_session_id,
+                    fn="verify_mc",
+                    ok=True,
+                    info={"mc": mc, "mock_used": use_mock},
+                ))
                 s.add(Event(event="activity", session_id=x_session_id, extra={"fn": "verify_mc"}))
                 s.commit()
 
