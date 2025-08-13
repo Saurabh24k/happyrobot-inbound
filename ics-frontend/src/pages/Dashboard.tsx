@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   Box, Heading, Text, Input, InputGroup, InputLeftAddon, Button,
-  HStack, VStack, SimpleGrid, Badge, Tooltip, useToast, Divider,
+  HStack, VStack, SimpleGrid, Badge, Tooltip, useToast,
   Tag, TagLabel, TagLeftIcon, useColorModeValue, useToken, Skeleton,
   Switch, FormControl, FormLabel,
 } from '@chakra-ui/react';
@@ -156,8 +156,8 @@ function SeriesToggle({
 
 // ----------------------------- Page ---------------------------------
 export default function Dashboard() {
-  const [blue700, blue600, blue500, purple500, orange500, gray500, red500] = useToken('colors',
-    ['blue.700', 'blue.600', 'blue.500', 'purple.500', 'orange.500', 'gray.500', 'red.500']);
+  const [blue600, blue500, purple500, orange500, gray500, red500] = useToken('colors',
+    ['blue.600', 'blue.500', 'purple.500', 'orange.500', 'gray.500', 'red.500']);
 
   const axisFg = useColorModeValue('#0f172a', '#cbd5e1');
   const gridColor = useColorModeValue('#e2e8f0', '#334155');
