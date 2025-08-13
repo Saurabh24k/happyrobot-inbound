@@ -1,89 +1,263 @@
+# Inbound Carrier Sales — HappyRobot POC
 
-# HappyRobot Inbound Carrier Sales — Backend API (Starter)
-
-This is the **minimal, production-ready starter** for your HappyRobot inbound agent backend.
-It exposes HTTP tools the agent will call during a live web-triggered call.
-
-## What this repo does (today)
-- **/search_loads**: reads `data/loads.csv`, filters by equipment/lane/pickup window, returns up to 3 loads.
-- **/verify_mc**: returns a **mock** eligibility (we'll swap to the real FMCSA adapter next).
-- **/log_event**: appends structured events to `data/events.jsonl` (for simple auditing/metrics later).
-- Secured by an **API key** via the `x-api-key` header.
-- Ready for **Docker** and **Render** deployment.
-
-> We'll add `/evaluate_offer` (negotiation), `/metrics`, and the real FMCSA check in the next steps.
+Automated inbound carrier calls: verify MCs against FMCSA, pitch loads, negotiate up to 3 rounds, and hand off to a sales rep — with clean KPIs and an audit trail.
 
 ---
 
-## Quickstart (local)
+## Live Demo Links
+
+* **Dashboard (frontend):** [https://inbound-frontend.onrender.com/dashboard](https://inbound-frontend.onrender.com/dashboard)
+* **API Base (backend):** [https://happyrobot-inbound.onrender.com](https://happyrobot-inbound.onrender.com)
+* **OpenAPI (JSON):** [https://happyrobot-inbound.onrender.com/openapi.json](https://happyrobot-inbound.onrender.com/openapi.json)
+
+**Auth header (all API calls):** `x-api-key: prod-xyz-123`
+
+---
+
+## What’s in this repo
+
+* **/api** — FastAPI service exposing:
+
+  * `POST /verify_mc` — FMCSA eligibility (authority / out-of-service)
+  * `POST /search_loads` — query loads by lane, equipment, pickup window
+  * `POST /evaluate_offer` — 3-round negotiation policy engine
+  * `POST /log_event` — record call events
+  * `POST /analytics/finalize` — write structured call summary
+  * Analytics & health endpoints (see OpenAPI)
+* **/frontend** — React (Chakra UI) dashboard:
+
+  * Settings page (API base + key, diagnostics)
+  * Dashboard (KPIs: conversion, rounds, outcomes, sentiment, etc.)
+
+---
+
+## Architecture (high level)
+
+* **HappyRobot** agent (Web Call Trigger) → calls your **API tools**
+  `verify_mc` → `search_loads` → `evaluate_offer` → `log_event` → `analytics/finalize`
+* **API** (FastAPI) behind HTTPS; `x-api-key` on every request; CORS allow-list
+* **FMCSA**: live eligibility via your **FMCSA web key**
+* **Dashboard** reads analytics endpoints for KPIs
+* Containerized for cloud or local runs
+
+---
+
+## Quickstart
+
+### 1) Cloud (Render)
+
+1. Fork/clone: [https://github.com/Saurabh24k/happyrobot-inbound](https://github.com/Saurabh24k/happyrobot-inbound)
+2. In **Render**: New → Web Service (Docker) → connect the repo → deploy
+3. Set environment variables:
+
+   * `API_KEY=prod-xyz-123`
+   * `FMCSA_API_KEY=<your-real-fmcsa-key>`
+   * `ALLOW_ORIGINS=https://inbound-frontend.onrender.com`
+     *(Use `*` for a demo; restrict in prod.)*
+4. Deploy. Use the resulting URL as your **API Base**.
+
+> Render provides HTTPS automatically.
+
+### 2) Local (Docker)
 
 ```bash
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+# from repo root
+docker build -t inbound-api .
+
+# run API on localhost:8000
+docker run --rm -p 8000:8000 \
+  -e API_KEY=dev-local-xyz \
+  -e FMCSA_API_KEY='<your-real-fmcsa-key>' \
+  -e ALLOW_ORIGINS='http://localhost:5173' \
+  inbound-api
+```
+
+Smoke tests:
+
+```bash
+curl -sS 'http://localhost:8000/health'
+
+curl -X POST 'http://localhost:8000/verify_mc' \
+  -H 'content-type: application/json' \
+  -H 'x-api-key: dev-local-xyz' \
+  -d '{"mc_number":"<real-mc-number>"}'
+```
+
+### 3) Local (Python venv)
+
+```bash
+python -m venv .venv
+# Windows: .venv\Scripts\activate
+source .venv/bin/activate
+
 pip install -r requirements.txt
 
-cp .env.example .env
-# Edit .env to set API_KEY and FMCSA_API_KEY (optional for now)
+# Environment
+export API_KEY=dev-local-xyz
+export FMCSA_API_KEY=<your-real-fmcsa-key>
+export ALLOW_ORIGINS=http://localhost:5173
 
-uvicorn api.app:app --reload --port 8000
+uvicorn api.app:app --port 8000
 ```
 
-### Smoke tests
+---
+
+## Configure the Dashboard
+
+Open: [https://inbound-frontend.onrender.com/dashboard](https://inbound-frontend.onrender.com/dashboard) → **Settings & Connections**
+
+* **API Base URL:** `https://happyrobot-inbound.onrender.com` *(or your local URL)*
+* **API Key:** `prod-xyz-123` *(or your local key)*
+* Click **Save** → **Run All Tests**
+  You should see: **Auth OK**, **Health OK**, **OpenAPI OK**.
+
+The Settings page supports export/import of config and shows discovered API routes.
+
+---
+
+## FMCSA (live)
+
+* Set `FMCSA_API_KEY` on the **API** service.
+* Call `POST /verify_mc` with a **real** MC number *(no `mock` flag in prod)*:
+
+  ```bash
+  curl -X POST '<API_BASE>/verify_mc' \
+    -H 'content-type: application/json' \
+    -H 'x-api-key: <your-api-key>' \
+    -d '{"mc_number":"<real-mc-number>"}'
+  ```
+
+> For non-prod demos only, you can test the pipeline with a mock flag:
+>
+> ```bash
+> curl -X POST '<API_BASE>/verify_mc' \
+>   -H 'content-type: application/json' \
+>   -H 'x-api-key: <your-api-key>' \
+>   -d '{"mc_number":"123456","mock":true}'
+> ```
+
+---
+
+## HappyRobot Agent Wiring (Web Call Trigger)
+
+Map tools to these endpoints (all with header `x-api-key: <your-api-key>`):
+
+| Tool (Agent)        | Method & Path              |
+| ------------------- | -------------------------- |
+| verify\_mc          | `POST /verify_mc`          |
+| search\_loads       | `POST /search_loads`       |
+| evaluate\_offer     | `POST /evaluate_offer`     |
+| log\_event          | `POST /log_event`          |
+| analytics\_finalize | `POST /analytics/finalize` |
+
+**Expected flow:** MC → FMCSA verify → pitch loads → ≤3 negotiation rounds → agreement → (transfer) → finalize analytics.
+
+---
+
+## API Cheatsheet (cURL)
+
+**Health**
+
 ```bash
-# Search sample loads
-curl -X POST http://localhost:8000/search_loads   -H "x-api-key: dev-local-xyz" -H "Content-Type: application/json"   -d '{"equipment_type":"Dry Van","origin":"Chicago, IL","destination":"Dallas, TX"}'
-
-# Verify MC (mock)
-curl -X POST http://localhost:8000/verify_mc   -H "x-api-key: dev-local-xyz" -H "Content-Type: application/json"   -d '{"mc_number":"123456"}'
-
-# Log event
-curl -X POST http://localhost:8000/log_event   -H "x-api-key: dev-local-xyz" -H "Content-Type: application/json"   -d '{"event":"test","note":"hello"}'
+curl -sS '<API_BASE>/health'
 ```
+
+**Verify MC (live)**
+
+```bash
+curl -X POST '<API_BASE>/verify_mc' \
+  -H 'content-type: application/json' \
+  -H 'x-api-key: <your-api-key>' \
+  -d '{"mc_number":"<real-mc-number>"}'
+```
+
+**Search loads**
+
+```bash
+curl -X POST '<API_BASE>/search_loads' \
+  -H 'content-type: application/json' \
+  -H 'x-api-key: <your-api-key>' \
+  -d '{
+        "equipment_type":"Dry Van",
+        "origin":"Newark, New Jersey",
+        "destination":"Boston, MA",
+        "pickup_window_start":"2025-08-06T09:00:00",
+        "pickup_window_end":"2025-08-06T19:00:00"
+      }'
+```
+
+**Evaluate offer**
+
+```bash
+curl -X POST '<API_BASE>/evaluate_offer' \
+  -H 'content-type: application/json' \
+  -H 'x-api-key: <your-api-key>' \
+  -d '{
+        "load_id":"L010",
+        "loadboard_rate":1400,
+        "carrier_offer":1500,
+        "round_num":1,
+        "prev_counter":null,
+        "anchor_high":null
+      }'
+```
+
+OpenAPI: `<API_BASE>/openapi.json` (includes `/verify_mc`, `/search_loads`, `/evaluate_offer`, `/log_event`, `/analytics/*`, `/health`, `/calls/*`)
 
 ---
 
-## Deploy to Render (Docker)
+## Environment Variables
 
-1. **Push this repo to GitHub** (or GitLab/Bitbucket).
-2. In Render, create a **new Web Service** → **Use Docker** → point to this repo.
-3. Set environment variables:
-   - `API_KEY` (e.g., `prod-xyz-123`)
-   - `FMCSA_API_KEY` (your real key)
-   - `ALLOW_ORIGINS` = `*` (or your domain)
-4. Click **Deploy**. After it turns green, you’ll get a public base URL like:
-   - `https://happyrobot-inbound-api.onrender.com`
-5. In HappyRobot, define tools pointing to that base URL, and add header:
-   - `x-api-key: <your API_KEY>`
+| Variable        | Purpose                           | Example                                 |
+| --------------- | --------------------------------- | --------------------------------------- |
+| `API_KEY`       | API key required via `x-api-key`  | `prod-xyz-123`                          |
+| `FMCSA_API_KEY` | Real FMCSA web key (live checks)  | `<your-real-fmcsa-key>`                 |
+| `ALLOW_ORIGINS` | CORS allow-list (frontend origin) | `https://inbound-frontend.onrender.com` |
 
-> For future infra-as-code, you can add a `render.yaml` blueprint, but the UI flow is quickest for now.
+> With `FMCSA_API_KEY` set, `/verify_mc` performs **live** FMCSA verification.
 
 ---
 
-## Repo layout
+## Security
 
-```
-api/
-  app.py                # FastAPI app with endpoints and API key auth
-  config.py             # Environment configuration (API keys, CORS, etc.)
-  adapters/
-    fmcsa.py            # FMCSA adapter (mock now; real HTTP coming next)
-  services/
-    search.py           # CSV-backed load search
-  models/
-    events.py           # (placeholder for future DB models)
-data/
-  loads.csv             # Sample loads (edit/replace with your data)
-  events.jsonl          # Appended call events (created at runtime)
-Dockerfile              # Container image for Render
-requirements.txt        # Python deps
-.env.example            # Example environment variables
-README.md               # This file
-```
+* **HTTPS** (cloud): served by the platform (e.g., Render)
+* **Auth**: all endpoints expect `x-api-key`
+* **CORS**: restrict `ALLOW_ORIGINS` to your dashboard origin in production
+* **Data**: minimal PII; events/analytics only for auditability
 
 ---
 
-## Next milestones
+## Troubleshooting
 
-1. Swap `/verify_mc` to call the **real FMCSA** API using your key (keep mock as a fallback).
-2. Add `/evaluate_offer` negotiation policy and prompt loop in HappyRobot (3 rounds max).
-3. Persist events to SQLite and expose `/metrics` → simple dashboard page.
-4. Harden security (rate limiting; schema validation; logs).
+**401/403 (Unauthorized)**
+Ensure the client sends `x-api-key` that matches server `API_KEY`.
+
+**FMCSA verify error**
+
+* Confirm `FMCSA_API_KEY` is set on the API service.
+* Retry with a known-good MC number.
+* Check that your FMCSA key is active / not rate-limited.
+
+**CORS errors (browser)**
+Set `ALLOW_ORIGINS` to your **exact** dashboard origin (or `*` for demo).
+
+**OpenAPI / Settings diagnostics fail**
+
+* Check `GET /health`.
+* Re-run **Run All Tests**.
+* Confirm the **API Base URL** is correct.
+
+---
+
+## License
+
+TBD by repository owner.
+
+---
+
+## Contact
+
+* **Dashboard:** [https://inbound-frontend.onrender.com/dashboard](https://inbound-frontend.onrender.com/dashboard)
+* **API Base:** [https://happyrobot-inbound.onrender.com](https://happyrobot-inbound.onrender.com)
+* **OpenAPI:** [https://happyrobot-inbound.onrender.com/openapi.json](https://happyrobot-inbound.onrender.com/openapi.json)
+* **Repo:** [https://github.com/Saurabh24k/happyrobot-inbound](https://github.com/Saurabh24k/happyrobot-inbound)
