@@ -164,6 +164,12 @@ def evaluate_offer(
     target = _snap(min(max(target, floor), ceil), tick)
     floor_r = _snap(floor, tick)
 
+    # ---------- R1 probe fix ----------
+    # If the caller asked "what's it paying?" and we probed with offer==0 on round 1,
+    # return a premium counter (target) — NEVER accept at 0.
+    if r1 and offer == 0.0:
+        return _mk_out("counter", target, floor, r, prev, anc_high_val, "probe_target_r1")
+
     # ---------- R1 lowball guard (protects against ASR mishears like 1500→500) ----------
     if offer > 0 and r1:
         too_low_vs_floor = offer < (floor * float(low_confirm_ratio))
