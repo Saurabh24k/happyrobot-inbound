@@ -1,14 +1,18 @@
-#!/usr/bin/env sh
-set -eu
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Default PORT to 8080 locally if not provided
-: "${PORT:=8080}"
+# 1) Write runtime config used by the SPA at runtime (no rebuild needed)
+cat >/usr/share/nginx/html/runtime-config.js <<'EOF'
+window.RUNTIME_CONFIG = {
+  API_BASE_URL: "${API_BASE_URL}",
+  API_KEY: "${API_KEY}"
+};
+EOF
 
-# Substitute env vars into the nginx template
-envsubst '${PORT} ${API_BASE_URL} ${API_KEY}' \
-  < /etc/nginx/conf.d/default.conf \
-  > /etc/nginx/conf.d/default.conf.out
-
-mv /etc/nginx/conf.d/default.conf.out /etc/nginx/conf.d/default.conf
+# 2) Render nginx.conf from template (if the template exists)
+if [ -f /etc/nginx/conf.d/default.conf.template ]; then
+  envsubst '${API_BASE_URL} ${API_KEY}' </etc/nginx/conf.d/default.conf.template \
+    >/etc/nginx/conf.d/default.conf
+fi
 
 exec nginx -g 'daemon off;'
