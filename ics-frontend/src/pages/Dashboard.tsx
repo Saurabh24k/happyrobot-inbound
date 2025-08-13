@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   Box, Heading, Text, Input, InputGroup, InputLeftAddon, Button,
-  HStack, VStack, SimpleGrid, Badge, Tooltip, Skeleton, Progress,
+  HStack, VStack, SimpleGrid, Badge, Skeleton, Progress,
 } from '@chakra-ui/react';
 import { RepeatIcon } from '@chakra-ui/icons';
 import { format, parseISO } from 'date-fns';
@@ -32,6 +32,10 @@ type DbUsage = {
 
 // ----------------------------- Utils ----------------------------
 const LS_DASH_RANGE = 'dashRange'; // '7' | '30' | 'mtd'
+// Settings keys written by your Settings page
+const KEY_BASE = 'api.base';
+const KEY_KEY = 'api.key';
+const KEY_HEADER = 'api.keyHeader'; // defaults to x-api-key
 
 function fmtCurrency(x: number | null | undefined) {
   if (x == null || Number.isNaN(x)) return '—';
@@ -51,33 +55,20 @@ function monthToDate() {
   };
 }
 
-// Settings overrides used by the Settings page
-const KEY_BASE_CANDIDATES = ['api.base', 'hr.api.base', 'API_BASE_URL'];
-const KEY_KEYNAME_CANDIDATES = ['api.keyHeader', 'hr.api.keyHeader']; // default x-api-key
-const KEY_KEY_CANDIDATES = ['api.key', 'hr.api.key', 'API_KEY'];
-
-function getFromLocalStorage(keys: string[]): string | null {
-  for (const k of keys) {
-    const v = window.localStorage.getItem(k);
-    if (v) return v;
-  }
-  return null;
-}
-
+// Read current API config directly from localStorage (overrides .env)
 function resolveApiConfig() {
-  const base = getFromLocalStorage(KEY_BASE_CANDIDATES) || '';
-  const keyHeader = getFromLocalStorage(KEY_KEYNAME_CANDIDATES) || 'x-api-key';
-  const key = getFromLocalStorage(KEY_KEY_CANDIDATES) || '';
-  return { base, keyHeader, key };
+  const base = window.localStorage.getItem(KEY_BASE) || '';
+  const key = window.localStorage.getItem(KEY_KEY) || '';
+  const keyHeader = window.localStorage.getItem(KEY_HEADER) || 'x-api-key';
+  return { base, key, keyHeader };
 }
 
+// Create a fresh axios client each call so changes in Settings apply immediately
 function createApi() {
-  const { base, keyHeader, key } = resolveApiConfig();
-  const client = axios.create({
-    baseURL: base || undefined,
-    headers: { 'content-type': 'application/json', ...(key ? { [keyHeader]: key } : {}) },
-  });
-  return client;
+  const { base, key, keyHeader } = resolveApiConfig();
+  const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json' };
+  if (key) headers[keyHeader] = key;
+  return axios.create({ baseURL: base || undefined, headers });
 }
 
 // GET with cache-bust using a page-local axios instance
@@ -87,7 +78,7 @@ async function getNoCache<T = any>(url: string, params?: Record<string, any>) {
   return data;
 }
 
-// Helpers for DB usage
+// DB usage helpers
 const toPct = (v: unknown): number => {
   const n = typeof v === 'number' ? v : Number(v);
   if (!Number.isFinite(n)) return 0;
@@ -108,28 +99,6 @@ const toDate = (v: unknown): Date | null => {
   }
   return null;
 };
-
-// ----------------------------- Small components -----------------------------
-function Card({ title, subtitle, children }: { title?: string; subtitle?: string; children: React.ReactNode; }) {
-  return (
-    <Box borderWidth="1px" rounded="lg" p={4} bg="white" _dark={{ bg: 'gray.800' }}>
-      {(title || subtitle) && (
-        <VStack align="start" spacing={0.5} mb={3}>
-          {title ? <Heading size="sm">{title}</Heading> : null}
-          {subtitle ? <Text color="gray.500" fontSize="sm">{subtitle}</Text> : null}
-        </VStack>
-      )}
-      {children}
-    </Box>
-  );
-}
-function EmptyState({ message }: { message: string }) {
-  return (
-    <HStack h="220px" align="center" justify="center">
-      <Text color="gray.500">{message}</Text>
-    </HStack>
-  );
-}
 
 // ----------------------------- Page ---------------------------------
 export default function Dashboard() {
@@ -211,17 +180,13 @@ export default function Dashboard() {
   const winPctStr = callsTotal ? `${Math.round((bookedTotal / callsTotal) * 100)}%` : '0%';
 
   const outcomeData = [
-    { name: 'Booked', value: summary?.totals?.booked ?? 0, color: '#4F46E5' },   // indigo-600
+    { name: 'Booked', value: summary?.totals?.booked ?? 0, color: '#2563EB' },   // blue-600
     { name: 'No Agreement', value: summary?.totals?.no_agreement ?? 0, color: '#F59E0B' }, // amber-500
     { name: 'No Match', value: summary?.totals?.no_match ?? 0, color: '#6B7280' }, // gray-500
     { name: 'Failed Auth', value: summary?.totals?.failed_auth ?? 0, color: '#EF4444' }, // red-500
-    { name: 'Abandoned', value: summary?.totals?.abandoned ?? 0, color: '#8B5CF6' }, // violet-500
+    { name: 'Abandoned', value: summary?.totals?.abandoned ?? 0, color: '#0EA5E9' }, // sky-500 (no purple)
   ];
   const totalOutcomes = outcomeData.reduce((s, d) => s + (d.value || 0), 0);
-
-  // Config warning
-  const cfg = resolveApiConfig();
-  const configProblem = !cfg.base ? 'API Base URL is missing' : !cfg.key ? 'API Key is missing' : null;
 
   const setRange = (range: '7' | '30' | 'mtd') => {
     window.localStorage.setItem(LS_DASH_RANGE, range);
@@ -231,13 +196,22 @@ export default function Dashboard() {
     setTimeout(() => { refetch(); fetchDb(); }, 0);
   };
 
+  const { base, keyHeader } = resolveApiConfig();
+
   return (
     <Box maxW="1100px" mx="auto" px={{ base: 4, md: 8 }} py={8} display="grid" gap={6}>
       {/* Header + Filters */}
       <HStack justify="space-between" align="center" wrap="wrap" gap={3}>
         <VStack align="start" spacing={1}>
           <Heading size="lg">Dashboard</Heading>
-          <Text color="gray.500" fontSize="sm">HappyRobot Carrier Sales</Text>
+          <HStack gap={2}>
+            <Text color="gray.500" fontSize="sm">HappyRobot Carrier Sales</Text>
+            {base && (
+              <Badge variant="subtle" colorScheme="gray" rounded="md">
+                Source: {base.replace(/^https?:\/\//, '')} ({keyHeader})
+              </Badge>
+            )}
+          </HStack>
         </VStack>
         <HStack gap={3} wrap="wrap">
           <InputGroup w="auto" minW="220px">
@@ -272,31 +246,23 @@ export default function Dashboard() {
       </HStack>
 
       {/* Errors / config */}
+      {!base && (
+        <Box borderWidth="1px" borderColor="orange.300" bg="orange.50" _dark={{ bg: 'orange.700', borderColor: 'orange.600' }} rounded="md" p={3}>
+          <Text fontSize="sm">Settings issue: API Base URL is missing. Open the Settings page and set the Base URL and API Key.</Text>
+        </Box>
+      )}
       {error && (
         <Box borderWidth="1px" borderColor="red.300" bg="red.50" _dark={{ bg: 'red.700', borderColor: 'red.600' }} rounded="md" p={3}>
           <Text fontSize="sm">{error}</Text>
         </Box>
       )}
-      {configProblem && (
-        <Box borderWidth="1px" borderColor="orange.300" bg="orange.50" _dark={{ bg: 'orange.700', borderColor: 'orange.600' }} rounded="md" p={3}>
-          <Text fontSize="sm">Settings issue: {configProblem}. Open the Settings page and set API Base URL and API Key.</Text>
-        </Box>
-      )}
 
-      {/* KPIs (simple) */}
+      {/* KPIs */}
       <SimpleGrid columns={{ base: 2, md: 4 }} spacing={4}>
-        <Card title="Calls">
-          <Heading size="lg">{callsTotal}</Heading>
-        </Card>
-        <Card title="Booked">
-          <Heading size="lg">{bookedTotal}</Heading>
-        </Card>
-        <Card title="Win %">
-          <Heading size="lg">{winPctStr}</Heading>
-        </Card>
-        <Card title="Avg Agreed">
-          <Heading size="lg">{fmtCurrency(summary?.rates?.avg_agreed ?? null)}</Heading>
-        </Card>
+        <Card title="Calls"><Heading size="lg">{callsTotal}</Heading></Card>
+        <Card title="Booked"><Heading size="lg">{bookedTotal}</Heading></Card>
+        <Card title="Win %"><Heading size="lg">{winPctStr}</Heading></Card>
+        <Card title="Avg Agreed"><Heading size="lg">{fmtCurrency(summary?.rates?.avg_agreed ?? null)}</Heading></Card>
       </SimpleGrid>
 
       {/* Trends */}
@@ -317,8 +283,8 @@ export default function Dashboard() {
                   formatter={(value: any, name: any) => [value, name === 'calls' ? 'Calls' : 'Booked']}
                   labelFormatter={(l) => format(parseISO(String(l)), 'EEE, MMM d')}
                 />
-                <Line type="monotone" dataKey="calls" stroke="#2563eb" dot={false} strokeWidth={2} />
-                <Line type="monotone" dataKey="booked" stroke="#7c3aed" dot={false} strokeWidth={2} />
+                <Line type="monotone" dataKey="calls" stroke="#2563EB" dot={false} strokeWidth={2} />
+                <Line type="monotone" dataKey="booked" stroke="#0EA5E9" dot={false} strokeWidth={2} />
               </LineChart>
             </ResponsiveContainer>
           </Box>
@@ -339,10 +305,7 @@ export default function Dashboard() {
                   {outcomeData.map((d, i) => <Cell key={i} fill={d.color} />)}
                   <ReLabel value={`${winPctStr} win`} position="center" />
                 </Pie>
-                <ReTooltip
-                  contentStyle={{ borderRadius: 12, borderColor: '#e2e8f0' }}
-                  formatter={(v: any, n: any) => [`${v}`, n]}
-                />
+                <ReTooltip contentStyle={{ borderRadius: 12, borderColor: '#e2e8f0' }} formatter={(v: any, n: any) => [`${v}`, n]} />
               </PieChart>
             </ResponsiveContainer>
           )}
@@ -364,7 +327,7 @@ export default function Dashboard() {
             </HStack>
             <Progress
               value={toPct(db.percent_used)}
-              colorScheme={toPct(db.percent_used) > 85 ? 'red' : toPct(db.percent_used) > 70 ? 'orange' : 'purple'}
+              colorScheme={toPct(db.percent_used) > 85 ? 'red' : toPct(db.percent_used) > 70 ? 'orange' : 'blue'}
               rounded="full"
               height="10px"
             />
@@ -389,5 +352,27 @@ export default function Dashboard() {
         )}
       </Card>
     </Box>
+  );
+}
+
+// ----------------------------- Small components -----------------------------
+function Card({ title, subtitle, children }: { title?: string; subtitle?: string; children: React.ReactNode; }) {
+  return (
+    <Box borderWidth="1px" rounded="lg" p={4} bg="white" _dark={{ bg: 'gray.800' }}>
+      {(title || subtitle) && (
+        <VStack align="start" spacing={0.5} mb={3}>
+          {title ? <Heading size="sm">{title}</Heading> : null}
+          {subtitle ? <Text color="gray.500" fontSize="sm">{subtitle}</Text> : null}
+        </VStack>
+      )}
+      {children}
+    </Box>
+  );
+}
+function EmptyState({ message }: { message: string }) {
+  return (
+    <HStack h="220px" align="center" justify="center">
+      <Text color="gray.500">{message}</Text>
+    </HStack>
   );
 }
