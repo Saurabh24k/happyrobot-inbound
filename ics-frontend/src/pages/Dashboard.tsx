@@ -16,7 +16,6 @@ import {
   ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip as ReTooltip,
   PieChart, Pie, Cell, Label as ReLabel, BarChart, Bar, AreaChart, Area,
 } from 'recharts';
-import { useSummary } from '../api/hooks';
 import { api } from '../api/client';
 
 // ----------------------------- Types ----------------------------
@@ -50,7 +49,7 @@ function fmtCurrency(x: number | null | undefined) {
 }
 function lastNDays(n: number) {
   const now = new Date();
-  const until = format(now, 'yyyy-MM-dd');
+  const until = format(now, 'yyyy-MM-dd'); // includes today
   const since = format(new Date(now.getTime() - (n - 1) * 86400000), 'yyyy-MM-dd');
   return { since, until };
 }
@@ -58,7 +57,7 @@ function monthToDate() {
   const now = new Date();
   return {
     since: format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd'),
-    until: format(now, 'yyyy-MM-dd'),
+    until: format(now, 'yyyy-MM-dd'), // includes today
   };
 }
 function toCSV(rows: Record<string, unknown>[], headerOrder?: string[]) {
@@ -86,17 +85,13 @@ function percentChange(series?: number[]) {
   return ((last - first) / Math.abs(first)) * 100;
 }
 
+// Cache-busting GET (page-local; avoids touching shared api)
+async function getNoCache<T = any>(url: string, params?: Record<string, any>) {
+  const { data } = await api.get<T>(url, { params: { ...(params || {}), _ts: Date.now() } });
+  return data;
+}
+
 // ----------------------------- Small components -----------------------------
-// function Pill({
-//   label, scheme, icon,
-// }: { label: string; scheme: 'green' | 'red' | 'gray' | 'blue' | 'purple' | 'orange'; icon: any; }) {
-//   return (
-//     <Tag size="sm" colorScheme={scheme} variant="subtle" rounded="full">
-//       <TagLeftIcon as={icon} />
-//       <TagLabel>{label}</TagLabel>
-//     </Tag>
-//   );
-// }
 function EmptyState({ message }: { message: string }) {
   const fg = useColorModeValue('gray.600', 'gray.400');
   return (
@@ -208,18 +203,38 @@ export default function Dashboard() {
   );
   const [live, setLive] = useState<boolean>((window.localStorage.getItem(LS_LIVE) || '0') === '1');
 
-  // Data
-  const { data, isLoading, error, refetch, isFetching } = useSummary(since, until);
-  const summary = (data ?? {}) as Summary;
+  // ---------- Data state (replaces useSummary; fixes ${API_BASE_URL} + caching) ----------
+  const [summary, setSummary] = useState<Summary | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isFetching, setIsFetching] = useState<boolean>(false);
+  const [error, setError] = useState<unknown>(null);
 
-  // DB usage (purposeful: verify backend wiring)
+  const fetchSummary = useCallback(async (silent = false) => {
+    try {
+      if (!silent) setIsLoading(true);
+      setIsFetching(true);
+      setError(null);
+      const data = await getNoCache<Summary>('/analytics/summary', { since, until });
+      setSummary(data ?? ({} as any));
+    } catch (e) {
+      setError(e);
+      setSummary(null);
+    } finally {
+      setIsLoading(false);
+      setIsFetching(false);
+    }
+  }, [since, until]);
+
+  const refetch = useCallback(() => fetchSummary(true), [fetchSummary]);
+
+  // ---------- DB usage ----------
   const [db, setDb] = useState<DbUsage | null>(null);
   const [dbLoading, setDbLoading] = useState(false);
   const fetchDb = useCallback(async () => {
     try {
       setDbLoading(true);
-      const res = await api.get('/analytics/db_usage');
-      setDb(res.data || null);
+      const data = await getNoCache<DbUsage>('/analytics/db_usage');
+      setDb(data || null);
     } catch {
       setDb(null);
     } finally {
@@ -233,6 +248,9 @@ export default function Dashboard() {
     if (preset === 'mtd') apply(monthToDate()); else apply(lastNDays(preset === '7' ? 7 : 30));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // mount
+
+  // Fetch data whenever range changes
+  useEffect(() => { fetchSummary(); }, [since, until, fetchSummary]);
 
   // Auto refresh
   useEffect(() => {
@@ -391,10 +409,10 @@ export default function Dashboard() {
 
       {/* KPIs (lean, useful) */}
       <SimpleGrid columns={{ base: 2, md: 4 }} spacing={4}>
-        <Kpi title="Calls" value={summary?.totals?.calls ?? 0} series={callsSeries} />
-        <Kpi title="Booked" value={summary?.totals?.booked ?? 0} series={bookedSeries} />
+        <Kpi title="Calls" value={callsTotal} series={callsSeries} />
+        <Kpi title="Booked" value={bookedTotal} series={bookedSeries} />
         <Kpi title="Win %" value={winPctStr} series={winSeries} isPercent />
-        <Kpi title="Avg Agreed" value={fmtCurrency(summary?.rates?.avg_agreed)} />
+        <Kpi title="Avg Agreed" value={fmtCurrency(summary?.rates?.avg_agreed ?? null)} />
       </SimpleGrid>
 
       {/* Trends & Outcomes */}
