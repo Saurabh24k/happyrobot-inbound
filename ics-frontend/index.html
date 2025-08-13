@@ -1,11 +1,19 @@
-<!-- index.html -->
+<!-- ics-frontend/index.html -->
 <!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Acme Logistics – Inbound Carrier Sales</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Inbound Carrier Sales</title>
+
+    <!-- Runtime config load before the app, so the client can read it -->
     <script src="/runtime-config.js"></script>
-    <script type="module" src="/src/main.tsx"></script>
   </head>
   <body>
+    <!-- This ID must match what main.tsx queries -->
+    <div id="root"></div>
+
+    <!-- Load the app bundle AFTER the root exists (bottom of body) -->
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

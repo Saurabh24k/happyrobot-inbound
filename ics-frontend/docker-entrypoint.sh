@@ -1,18 +1,29 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env sh
+set -eu
 
-# 1) Write runtime config used by the SPA at runtime (no rebuild needed)
-cat >/usr/share/nginx/html/runtime-config.js <<'EOF'
+# Defaults (Render will override via service env)
+: "${PORT:=8080}"
+: "${API_BASE_URL:=https://happyrobot-inbound.onrender.com}"
+: "${API_KEY:=}"
+
+# Generate runtime-config.js with envsubst (no caching)
+cat >/usr/share/nginx/html/runtime-config.js.tmpl <<'EOF'
 window.RUNTIME_CONFIG = {
   API_BASE_URL: "${API_BASE_URL}",
   API_KEY: "${API_KEY}"
 };
 EOF
+envsubst '${API_BASE_URL} ${API_KEY}' \
+  </usr/share/nginx/html/runtime-config.js.tmpl \
+  >/usr/share/nginx/html/runtime-config.js
 
-# 2) Render nginx.conf from template (if the template exists)
-if [ -f /etc/nginx/conf.d/default.conf.template ]; then
-  envsubst '${API_BASE_URL} ${API_KEY}' </etc/nginx/conf.d/default.conf.template \
-    >/etc/nginx/conf.d/default.conf
-fi
+# Render nginx.conf with the right PORT
+envsubst '${PORT}' \
+  </etc/nginx/conf.d/default.conf.tmpl \
+  >/etc/nginx/conf.d/default.conf
+
+# (optional) tiny debug so you can see the injected values in Render logs
+echo "runtime-config.js ->"
+cat /usr/share/nginx/html/runtime-config.js
 
 exec nginx -g 'daemon off;'

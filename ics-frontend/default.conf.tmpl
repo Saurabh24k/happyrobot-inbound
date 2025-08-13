@@ -1,0 +1,20 @@
+# ics-frontend/default.conf.tmpl
+server {
+  listen ${PORT};
+  server_name _;
+
+  root /usr/share/nginx/html;
+  index index.html;
+
+  # never cache runtime-config.js
+  location = /runtime-config.js {
+    add_header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate";
+    add_header Pragma "no-cache";
+    add_header Expires "0";
+    try_files $uri =404;
+  }
+
+  location / {
+    try_files $uri /index.html;
+  }
+}
