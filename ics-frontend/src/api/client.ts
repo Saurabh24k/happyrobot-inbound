@@ -25,7 +25,7 @@ export function getApiBase(): string {
   if (runtime) return runtime.replace(/\/+$/, '');
 
   // 3) Vite env (build-time)
-  const env = (import.meta.env.VITE_API_BASE_URL ?? '').trim();
+  const env = (import.meta.env.VITE_API_BASE_URL ?? '').toString().trim();
   return env.replace(/\/+$/, '');
 }
 
@@ -40,7 +40,7 @@ export function getApiKey(): string {
   if (runtime) return runtime;
 
   // 3) Vite env
-  return (import.meta.env.VITE_API_KEY ?? '').trim();
+  return (import.meta.env.VITE_API_KEY ?? '').toString().trim();
 }
 
 export const api = axios.create({
