@@ -40,7 +40,7 @@ function fmtCurrency(x: number | null | undefined) {
 }
 function lastNDays(n: number) {
   const now = new Date();
-  const until = format(now, 'yyyy-MM-dd'); // includes today
+  const until = format(now, 'yyyy-MM-dd');
   const since = format(new Date(now.getTime() - (n - 1) * 86400000), 'yyyy-MM-dd');
   return { since, until };
 }
@@ -48,7 +48,7 @@ function monthToDate() {
   const now = new Date();
   return {
     since: format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd'),
-    until: format(now, 'yyyy-MM-dd'), // includes today
+    until: format(now, 'yyyy-MM-dd'),
   };
 }
 function toCSV(rows: Record<string, unknown>[], headerOrder?: string[]) {
@@ -114,17 +114,6 @@ function Card({ title, subtitle, children }: { title?: string; subtitle?: string
     </Box>
   );
 }
-function ToggleChip({ active, label, onClick }: { active: boolean; label: string; onClick: () => void; }) {
-  return (
-    <Tag
-      size="md" colorScheme={active ? 'purple' : 'gray'} variant={active ? 'solid' : 'subtle'}
-      cursor="pointer" onClick={onClick} rounded="full" aria-pressed={active} role="button" px={3}
-    >
-      <TagLeftIcon as={active ? ViewIcon : ViewOffIcon} />
-      <TagLabel>{label}</TagLabel>
-    </Tag>
-  );
-}
 function RangeTag({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
   return (
     <Tag
@@ -133,6 +122,35 @@ function RangeTag({ active, label, onClick }: { active: boolean; label: string; 
     >
       <TagLabel>{label}</TagLabel>
     </Tag>
+  );
+}
+function StatChip({ label, value }: { label: string; value: string | number }) {
+  return (
+    <Tag size="sm" variant="subtle" rounded="full" colorScheme="gray">
+      <TagLeftIcon as={InfoOutlineIcon} />
+      <TagLabel>
+        {label}: {value}
+      </TagLabel>
+    </Tag>
+  );
+}
+
+// NEW: premium, functional legend chip
+function SeriesToggle({
+  label, active, onClick, swatch,
+}: { label: string; active: boolean; onClick: () => void; swatch: string }) {
+  return (
+    <Button
+      size="xs"
+      variant={active ? 'solid' : 'outline'}
+      colorScheme={active ? 'blue' : 'gray'}
+      onClick={onClick}
+      leftIcon={<Box w="10px" h="10px" rounded="full" bg={swatch} />}
+      rightIcon={active ? <ViewIcon /> : <ViewOffIcon />}
+      aria-pressed={active}
+    >
+      {label}
+    </Button>
   );
 }
 
@@ -157,7 +175,7 @@ export default function Dashboard() {
   );
   const [live, setLive] = useState<boolean>((window.localStorage.getItem(LS_LIVE) || '0') === '1');
 
-  // ---------- Data state ----------
+  // Data state
   const [summary, setSummary] = useState<Summary | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isFetching, setIsFetching] = useState<boolean>(false);
@@ -219,7 +237,7 @@ export default function Dashboard() {
   ];
   const totalOutcomes = outcomeData.reduce((s, d) => s + (d.value || 0), 0);
 
-  // ✅ End label should follow the selected "until" date
+  // End label follows selected until date
   const endLabel = useMemo(() => {
     const d = until || (timeseries.length ? timeseries[timeseries.length - 1].date : null);
     try {
@@ -235,7 +253,6 @@ export default function Dashboard() {
     setPreset(range);
     const r = range === 'mtd' ? monthToDate() : lastNDays(range === '7' ? 7 : 30);
     setSince(r.since); setUntil(r.until);
-    // Kick a fetch so chips + charts update immediately
     setTimeout(() => { refetch(); }, 0);
   };
   const exportCSV = () => {
@@ -247,9 +264,17 @@ export default function Dashboard() {
   const hasError = !!error;
   const showPerfChips = !isLoading && (timeseries.length > 0 || callsTotal > 0 || bookedTotal > 0);
 
+  // Local state for the new widget
+  const [showCalls, setShowCalls] = useState(true);
+  const [showBooked, setShowBooked] = useState(true);
+
+  // Colors for the new widget (no purple)
+  const callsColor = '#2563eb';   // blue-600
+  const bookedColor = '#0ea5e9';  // sky-500
+
   return (
     <Box maxW="1100px" mx="auto" px={{ base: 4, md: 8 }} py={10} display="grid" gap={6} animation={`${fadeIn} .25s ease`}>
-      {/* Brand header (logo removed) */}
+      {/* Mini header */}
       <HStack justify="flex-end" align="center" animation={`${fadeUp} .24s ease`}>
         <Badge rounded="full" px={3} py={1} colorScheme="purple" variant="subtle">Dashboard</Badge>
       </HStack>
@@ -358,44 +383,88 @@ export default function Dashboard() {
 
       {/* Trends & Outcomes */}
       <SimpleGrid columns={{ base: 1, lg: 2 }} spacing={6}>
+        {/* —— New premium Volume & Bookings widget —— */}
         <Card title="Volume & Bookings" subtitle="Daily calls vs. booked loads">
           {isLoading ? (
-            <Skeleton h="320px" rounded="md" />
+            <Skeleton h="340px" rounded="md" />
           ) : timeseries.length === 0 ? (
             <EmptyState message="No data for the selected range." />
           ) : (
-            <Box h="320px" animation={`${fadeUp} .32s ease`}>
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={timeseries as any}>
-                  <defs>
-                    <linearGradient id="gradCalls" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={blue700} stopOpacity={0.95} />
-                      <stop offset="100%" stopColor={blue700} stopOpacity={0.15} />
-                    </linearGradient>
-                    <linearGradient id="gradBooked" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={purple500} stopOpacity={0.95} />
-                      <stop offset="100%" stopColor={purple500} stopOpacity={0.18} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
-                  <XAxis dataKey="date" tickFormatter={(d) => format(parseISO(d as string), 'MMM d')} stroke={axisFg} tickLine={false} />
-                  <YAxis allowDecimals={false} stroke={axisFg} tickLine={false} axisLine={false} />
-                  <ReTooltip
-                    contentStyle={{ borderRadius: 12, borderColor: '#e2e8f0' }}
-                    formatter={(value: any, name: any) => [value, name === 'calls' ? 'Calls' : 'Booked']}
-                    labelFormatter={(l) => format(parseISO(String(l)), 'EEE, MMM d')}
-                  />
-                  <Line type="monotone" dataKey="calls" stroke="url(#gradCalls)" dot={false} strokeWidth={2} />
-                  <Line type="monotone" dataKey="booked" stroke="url(#gradBooked)" dot={false} strokeWidth={2} />
-                </LineChart>
-              </ResponsiveContainer>
+            <Box animation={`${fadeUp} .32s ease`}>
+              {/* Legend chips */}
+              <HStack justify="flex-end" mb={3} spacing={2}>
+                <SeriesToggle
+                  label="Calls"
+                  active={showCalls}
+                  onClick={() => setShowCalls((v) => !v)}
+                  swatch={callsColor}
+                />
+                <SeriesToggle
+                  label="Booked"
+                  active={showBooked}
+                  onClick={() => setShowBooked((v) => !v)}
+                  swatch={bookedColor}
+                />
+              </HStack>
+
+              <Box h="320px">
+                {(!showCalls && !showBooked) ? (
+                  <EmptyState message="Enable a series to view the chart." />
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={timeseries as any}>
+                      <defs>
+                        <linearGradient id="gradCalls" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={callsColor} stopOpacity={0.95} />
+                          <stop offset="100%" stopColor={callsColor} stopOpacity={0.15} />
+                        </linearGradient>
+                        <linearGradient id="gradBooked" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={bookedColor} stopOpacity={0.95} />
+                          <stop offset="100%" stopColor={bookedColor} stopOpacity={0.18} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+                      <XAxis
+                        dataKey="date"
+                        tickFormatter={(d) => format(parseISO(d as string), 'MMM d')}
+                        stroke={axisFg}
+                        tickLine={false}
+                      />
+                      <YAxis allowDecimals={false} stroke={axisFg} tickLine={false} axisLine={false} />
+                      <ReTooltip
+                        contentStyle={{ borderRadius: 12, borderColor: '#e2e8f0' }}
+                        labelFormatter={(l) => format(parseISO(String(l)), 'EEE, MMM d')}
+                        formatter={(value: any, name: any) => {
+                          const label = name === 'calls' ? 'Calls' : 'Booked';
+                          return [value, label];
+                        }}
+                      />
+                      {showCalls && (
+                        <Line
+                          type="monotone"
+                          dataKey="calls"
+                          stroke="url(#gradCalls)"
+                          dot={timeseries.length <= 14}
+                          strokeWidth={2}
+                          name="Calls"
+                        />
+                      )}
+                      {showBooked && (
+                        <Line
+                          type="monotone"
+                          dataKey="booked"
+                          stroke="url(#gradBooked)"
+                          dot={timeseries.length <= 14}
+                          strokeWidth={2}
+                          name="Booked"
+                        />
+                      )}
+                    </LineChart>
+                  </ResponsiveContainer>
+                )}
+              </Box>
             </Box>
           )}
-          <Divider my={4} />
-          <HStack gap={2} justify="flex-end">
-            <ToggleChip active label="Show Calls" onClick={() => { /* always on */ }} />
-            <ToggleChip active label="Show Booked" onClick={() => { /* always on */ }} />
-          </HStack>
         </Card>
 
         <Card title="Outcomes" subtitle="Share of call outcomes">
@@ -536,17 +605,5 @@ function Donut({
         />
       </PieChart>
     </ResponsiveContainer>
-  );
-}
-
-// Small live stat chip
-function StatChip({ label, value }: { label: string; value: string | number }) {
-  return (
-    <Tag size="sm" variant="subtle" rounded="full" colorScheme="gray">
-      <TagLeftIcon as={InfoOutlineIcon} />
-      <TagLabel>
-        {label}: {value}
-      </TagLabel>
-    </Tag>
   );
 }
