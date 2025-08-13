@@ -19,7 +19,7 @@ import { SunIcon, MoonIcon } from "@chakra-ui/icons";
 import { BrowserRouter, Routes, Route, Navigate, NavLink } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import theme from "./theme"; // Chakra v2 theme (extendTheme)
+import theme from "./theme";
 
 // Pages
 import Dashboard from "./pages/Dashboard";
@@ -102,24 +102,44 @@ function Layout({ children }: { children: React.ReactNode }) {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <ChakraProvider theme={theme}>
-      <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <Layout>
-            <Routes>
-              <Route path="/" element={<Navigate to="/dashboard" replace />} />
-              <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/calls" element={<Calls />} />
-              <Route path="/calls/:id" element={<CallDetail />} />
-              <Route path="/loads" element={<Loads />} />
-              <Route path="/settings" element={<Settings />} />
-              <Route path="*" element={<Navigate to="/dashboard" replace />} />
-            </Routes>
-          </Layout>
-        </BrowserRouter>
-      </QueryClientProvider>
-    </ChakraProvider>
-  </React.StrictMode>
-);
+function AppTree() {
+  return (
+    <React.StrictMode>
+      <ChakraProvider theme={theme}>
+        <QueryClientProvider client={queryClient}>
+          <BrowserRouter>
+            <Layout>
+              <Routes>
+                <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/calls" element={<Calls />} />
+                <Route path="/calls/:id" element={<CallDetail />} />
+                <Route path="/loads" element={<Loads />} />
+                <Route path="/settings" element={<Settings />} />
+                <Route path="*" element={<Navigate to="/dashboard" replace />} />
+              </Routes>
+            </Layout>
+          </BrowserRouter>
+        </QueryClientProvider>
+      </ChakraProvider>
+    </React.StrictMode>
+  );
+}
+
+function mount() {
+  let el = document.getElementById("root");
+  if (!el) {
+    console.error("Root element #root not found. Creating it dynamically.");
+    el = document.createElement("div");
+    el.id = "root";
+    document.body.appendChild(el);
+  }
+  ReactDOM.createRoot(el).render(<AppTree />);
+}
+
+// Ensure DOM exists before mounting (prevents React error 299)
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", mount, { once: true });
+} else {
+  mount();
+}
