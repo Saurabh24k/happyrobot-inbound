@@ -1,8 +1,5 @@
-Perfect—here’s a clean, final **Deployment & Reproduction Guide** written for a customer using a **real FMCSA key** (no mock flags). It includes how to access your running POC, how to wire their FMCSA key, and how to reproduce the deploy (cloud + local) using your existing containers and repo.
 
----
-
-# Inbound Carrier Sales POC — Deployment & Reproduction Guide (FMCSA-Ready)
+# Inbound Carrier Sales — Deployment & Reproduction Guide (FMCSA-Ready)
 
 This guide shows Acme’s team how to **access the running POC**, configure it with a **real FMCSA key**, and **reproduce** the deployment (cloud or local). It also covers env vars, security, and troubleshooting.
 
