@@ -1,9 +1,6 @@
 
 # Inbound Carrier Sales — Deployment & Reproduction Guide (FMCSA-Ready)
 
-This guide shows Acme’s team how to **access the running POC**, configure it with a **real FMCSA key**, and **reproduce** the deployment (cloud or local). It also covers env vars, security, and troubleshooting.
-
----
 
 ## 1) Quick Access (Live)
 
