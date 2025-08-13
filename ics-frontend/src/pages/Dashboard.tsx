@@ -28,12 +28,12 @@ type Summary = {
 };
 
 type DbUsage = {
-  driver: string;
+  driver?: string;
   database?: string | null;
-  percent_used?: number | null;
-  bytes_used?: number | null;
-  bytes_limit?: number | null;
-  last_event_at?: string | null;
+  percent_used?: number | string | null;
+  bytes_used?: number | string | null;
+  bytes_limit?: number | string | null;
+  last_event_at?: string | number | Date | null;
 };
 
 // ----------------------------- Utils ----------------------------
@@ -42,6 +42,8 @@ const LS_LIVE = 'dashLive';        // '1' | '0'
 
 const fadeUp = keyframes`from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}`;
 const fadeIn = keyframes`from{opacity:0}to{opacity:1}`;
+const shimmer = keyframes`0%{background-position:0% 50%}100%{background-position:100% 50%}`;
+const float = keyframes`0%{transform:translateY(0)}50%{transform:translateY(-3px)}100%{transform:translateY(0)}`;
 
 function fmtCurrency(x: number | null | undefined) {
   if (x == null || Number.isNaN(x)) return '—';
@@ -90,6 +92,28 @@ async function getNoCache<T = any>(url: string, params?: Record<string, any>) {
   const { data } = await api.get<T>(url, { params: { ...(params || {}), _ts: Date.now() } });
   return data;
 }
+
+// Robust coercions for DB usage fields
+const toPct = (v: unknown): number => {
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, n));
+};
+const toDate = (v: unknown): Date | null => {
+  if (v == null) return null;
+  if (v instanceof Date && !isNaN(v.valueOf())) return v;
+  if (typeof v === 'string') {
+    const iso = parseISO(v);
+    if (!isNaN(iso.valueOf())) return iso;
+    const d = new Date(v);
+    return isNaN(d.valueOf()) ? null : d;
+  }
+  if (typeof v === 'number') {
+    const d = new Date(v > 1e12 ? v : v * 1000); // accept seconds or ms
+    return isNaN(d.valueOf()) ? null : d;
+  }
+  return null;
+};
 
 // ----------------------------- Small components -----------------------------
 function EmptyState({ message }: { message: string }) {
@@ -145,40 +169,40 @@ function RangeTag({ active, label, onClick }: { active: boolean; label: string; 
   );
 }
 
-// Unified donut with center label + hover highlight
-function Donut({
-  data, inner = '55%', outer = '85%', centerLabel,
-}: {
-  data: Array<{ name: string; value: number; color: string }>;
-  inner?: string | number;
-  outer?: string | number;
-  centerLabel: string;
-}) {
+// Tiny animated logo
+function AcmeLogo({ size = 28 }: { size?: number }) {
+  const fill = useColorModeValue('#2563eb', '#93c5fd');
+  const accent = useColorModeValue('#7c3aed', '#c4b5fd');
   return (
-    <ResponsiveContainer width="100%" height="100%">
-      <PieChart>
-        <Pie data={data as any} dataKey="value" nameKey="name" innerRadius={inner} outerRadius={outer} paddingAngle={2}>
-          {data.map((d, i) => <Cell key={i} fill={d.color} />)}
-          <ReLabel value={centerLabel} position="center" />
-        </Pie>
-        <ReTooltip
-          contentStyle={{ borderRadius: 12, borderColor: '#e2e8f0' }}
-          formatter={(v: any, n: any) => [`${v}`, n]}
-        />
-      </PieChart>
-    </ResponsiveContainer>
-  );
-}
-
-// Small live stat chip (only renders when we actually have data)
-function StatChip({ label, value }: { label: string; value: string | number }) {
-  return (
-    <Tag size="sm" variant="subtle" rounded="full" colorScheme="gray">
-      <TagLeftIcon as={InfoOutlineIcon} />
-      <TagLabel>
-        {label}: {value}
-      </TagLabel>
-    </Tag>
+    <HStack spacing={2}>
+      <Box
+        as="span"
+        display="inline-flex"
+        alignItems="center"
+        justifyContent="center"
+        w={`${size}px`}
+        h={`${size}px`}
+        rounded="xl"
+        bgGradient="linear(to-br, blue.500, purple.500)"
+        animation={`${float} 3s ease-in-out infinite`}
+      >
+        {/* simple truck glyph */}
+        <Box as="svg" viewBox="0 0 24 24" boxSize={`${Math.round(size * 0.7)}px`} aria-hidden>
+          <path d="M3 6h10v8H3V6zM13 9h4l3 3v2h-7V9z" fill={fill}/>
+          <circle cx="7" cy="16" r="2" fill={accent}/>
+          <circle cx="17" cy="16" r="2" fill={accent}/>
+        </Box>
+      </Box>
+      <Heading
+        size="md"
+        bgGradient="linear(to-r, blue.600, purple.500, pink.400)"
+        bgClip="text"
+        lineHeight="1"
+        sx={{ backgroundSize: '200% 200%', animation: `${shimmer} 5s linear infinite` }}
+      >
+        Acme Logistics Carrier Sales
+      </Heading>
+    </HStack>
   );
 }
 
@@ -203,7 +227,7 @@ export default function Dashboard() {
   );
   const [live, setLive] = useState<boolean>((window.localStorage.getItem(LS_LIVE) || '0') === '1');
 
-  // ---------- Data state (replaces useSummary; fixes ${API_BASE_URL} + caching) ----------
+  // ---------- Data state ----------
   const [summary, setSummary] = useState<Summary | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isFetching, setIsFetching] = useState<boolean>(false);
@@ -227,14 +251,24 @@ export default function Dashboard() {
 
   const refetch = useCallback(() => fetchSummary(true), [fetchSummary]);
 
-  // ---------- DB usage ----------
+  // ---------- DB usage (robust) ----------
   const [db, setDb] = useState<DbUsage | null>(null);
   const [dbLoading, setDbLoading] = useState(false);
+
   const fetchDb = useCallback(async () => {
     try {
       setDbLoading(true);
-      const data = await getNoCache<DbUsage>('/analytics/db_usage');
-      setDb(data || null);
+      const raw = await getNoCache<any>('/analytics/db_usage');
+      // normalize fields & tolerate varied shapes
+      const data: DbUsage = {
+        driver: raw?.driver ?? 'PostgreSQL',
+        database: raw?.database ?? raw?.db ?? null,
+        percent_used: raw?.percent_used ?? raw?.storage_percent ?? raw?.usage_percent ?? null,
+        bytes_used: raw?.bytes_used ?? raw?.used_bytes ?? null,
+        bytes_limit: raw?.bytes_limit ?? raw?.limit_bytes ?? null,
+        last_event_at: raw?.last_event_at ?? raw?.last_write_at ?? raw?.latest_event_at ?? null,
+      };
+      setDb(data);
     } catch {
       setDb(null);
     } finally {
@@ -313,6 +347,12 @@ export default function Dashboard() {
 
   return (
     <Box maxW="1100px" mx="auto" px={{ base: 4, md: 8 }} py={10} display="grid" gap={6} animation={`${fadeIn} .25s ease`}>
+      {/* Brand header */}
+      <HStack justify="space-between" align="center" animation={`${fadeUp} .24s ease`}>
+        <AcmeLogo />
+        <Badge rounded="full" px={3} py={1} colorScheme="purple" variant="subtle">Dashboard</Badge>
+      </HStack>
+
       {/* Performance bar (only real data; no dummies) */}
       <Box
         borderWidth="1px" borderColor={bannerBorder} bg={bannerBg} rounded="2xl"
@@ -368,11 +408,11 @@ export default function Dashboard() {
         </HStack>
       </Box>
 
-      {/* Header + Filters */}
+      {/* Filters */}
       <HStack justify="space-between" align="center" animation={`${fadeUp} .3s ease .02s both`} wrap="wrap" gap={3}>
         <VStack align="start" spacing={1}>
-          <Heading size="lg" letterSpacing="-0.02em">Dashboard</Heading>
-          <Text color="gray.500" fontSize="sm">HappyRobot Carrier Sales</Text>
+          <Heading size="lg" letterSpacing="-0.02em">Acme Logistics Carrier Sales</Heading>
+          <Text color="gray.500" fontSize="sm">Insights & operations overview</Text>
         </VStack>
         <HStack gap={3} wrap="wrap">
           <InputGroup w="auto" minW="220px">
@@ -407,7 +447,7 @@ export default function Dashboard() {
         </Box>
       )}
 
-      {/* KPIs (lean, useful) */}
+      {/* KPIs */}
       <SimpleGrid columns={{ base: 2, md: 4 }} spacing={4}>
         <Kpi title="Calls" value={callsTotal} series={callsSeries} />
         <Kpi title="Booked" value={bookedTotal} series={bookedSeries} />
@@ -452,8 +492,8 @@ export default function Dashboard() {
           )}
           <Divider my={4} />
           <HStack gap={2} justify="flex-end">
-            <ToggleChip active label="Show Calls" onClick={() => { /* always on for clarity */ }} />
-            <ToggleChip active label="Show Booked" onClick={() => { /* always on for clarity */ }} />
+            <ToggleChip active label="Show Calls" onClick={() => { /* always on */ }} />
+            <ToggleChip active label="Show Booked" onClick={() => { /* always on */ }} />
           </HStack>
         </Card>
 
@@ -528,25 +568,30 @@ export default function Dashboard() {
           <VStack align="stretch" gap={3}>
             <HStack justify="space-between" wrap="wrap">
               <Text fontSize="sm" color="gray.600">
-                {db.driver}{db.database ? ` • ${db.database}` : ''}
+                {(db.driver || 'PostgreSQL')}{db.database ? ` • ${db.database}` : ''}
               </Text>
               <Text fontSize="sm" color="gray.600">
-                {typeof db.percent_used === 'number' ? `${Math.round(db.percent_used)}% used` : '—'}
+                {Number.isFinite(Number(db.percent_used)) ? `${Math.round(toPct(db.percent_used))}% used` : '—'}
               </Text>
             </HStack>
-            <Progress
-              value={typeof db.percent_used === 'number' ? db.percent_used : 0}
-              colorScheme={
-                db.percent_used && db.percent_used > 85 ? 'red'
-                : db.percent_used && db.percent_used > 70 ? 'orange'
-                : 'purple'
-              }
-              rounded="full"
-              height="10px"
-            />
+            {(() => {
+              const pct = toPct(db.percent_used);
+              const scheme = pct > 85 ? 'red' : pct > 70 ? 'orange' : 'purple';
+              return (
+                <Progress
+                  value={pct}
+                  colorScheme={scheme}
+                  rounded="full"
+                  height="10px"
+                />
+              );
+            })()}
             <HStack justify="space-between" wrap="wrap">
               <Text fontSize="sm" color="gray.500">
-                Last event: {db.last_event_at ? format(parseISO(db.last_event_at), 'PPpp') : '—'}
+                {(() => {
+                  const d = toDate(db.last_event_at);
+                  return `Last event: ${d ? format(d, 'PPpp') : '—'}`;
+                })()}
               </Text>
               <Button size="sm" variant="outline" leftIcon={<RepeatIcon />} onClick={fetchDb}>
                 Refresh Source
@@ -606,5 +651,42 @@ function Kpi({ title, value, series, isPercent }: { title: string; value: string
         </HStack>
       </VStack>
     </Box>
+  );
+}
+
+// Unified donut with center label + hover highlight
+function Donut({
+  data, inner = '55%', outer = '85%', centerLabel,
+}: {
+  data: Array<{ name: string; value: number; color: string }>;
+  inner?: string | number;
+  outer?: string | number;
+  centerLabel: string;
+}) {
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <PieChart>
+        <Pie data={data as any} dataKey="value" nameKey="name" innerRadius={inner} outerRadius={outer} paddingAngle={2}>
+          {data.map((d, i) => <Cell key={i} fill={d.color} />)}
+          <ReLabel value={centerLabel} position="center" />
+        </Pie>
+        <ReTooltip
+          contentStyle={{ borderRadius: 12, borderColor: '#e2e8f0' }}
+          formatter={(v: any, n: any) => [`${v}`, n]}
+        />
+      </PieChart>
+    </ResponsiveContainer>
+  );
+}
+
+// Small live stat chip
+function StatChip({ label, value }: { label: string; value: string | number }) {
+  return (
+    <Tag size="sm" variant="subtle" rounded="full" colorScheme="gray">
+      <TagLeftIcon as={InfoOutlineIcon} />
+      <TagLabel>
+        {label}: {value}
+      </TagLabel>
+    </Tag>
   );
 }
