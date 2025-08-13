@@ -8,9 +8,15 @@ const config: ThemeConfig = {
 
 const theme = extendTheme({
   config,
+  fonts: {
+    heading:
+      'Poppins, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"',
+    body:
+      'Poppins, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"',
+  },
   colors: {
     brand: {
-      50: "#e7f1ff",
+      50:  "#e7f1ff",
       100: "#c2d7ff",
       200: "#9bbcff",
       300: "#73a1ff",
@@ -24,10 +30,31 @@ const theme = extendTheme({
   },
   styles: {
     global: {
+      "html, body, #root": { height: "100%" },
       body: {
         bg: "gray.50",
-        _dark: { bg: "gray.900" },
+        color: "gray.800",
+        _dark: { bg: "gray.900", color: "gray.100" },
       },
+    },
+  },
+  radii: {
+    xl: "14px",
+    "2xl": "18px",
+  },
+  components: {
+    Button: {
+      baseStyle: { rounded: "2xl" },
+      defaultProps: { colorScheme: "brand" },
+    },
+    Badge: {
+      baseStyle: { rounded: "full" },
+    },
+    Tag: {
+      baseStyle: { rounded: "full" },
+    },
+    Card: {
+      baseStyle: { rounded: "2xl" },
     },
   },
 });

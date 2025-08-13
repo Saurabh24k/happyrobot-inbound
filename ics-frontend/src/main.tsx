@@ -81,7 +81,7 @@ function Layout({ children }: { children: React.ReactNode }) {
       <Box borderBottomWidth="1px" borderColor={borderColor} bg={topBg} position="sticky" top={0} zIndex={10}>
         <Container maxW="6xl" py={3}>
           <HStack spacing={4}>
-            <Heading size="md">HappyRobot Carrier Sales</Heading>
+            <Heading size="md">Acme Carrier Sales</Heading>
             <Spacer />
             <HStack spacing={1}>
               <NavItem to="/dashboard">Dashboard</NavItem>

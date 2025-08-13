@@ -3,17 +3,37 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Inbound Carrier Sales</title>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1"
+    />
+    <title>Acme Logistics Carrier Sales</title>
 
-    <!-- Runtime config load before the app, so the client can read it -->
+    <!-- Poppins font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Favicon: simple Acme “A” in brand colors (no extra file needed) -->
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="%23336ee6"/><stop offset="100%" stop-color="%231c3e82"/></linearGradient></defs><rect width="64" height="64" rx="12" fill="url(%23g)"/><path d="M32 12l16 40h-7.6l-3.6-9.6H27.2L23.6 52H16L32 12zm-1.8 22.8h7.6L32 21.8l-1.8 13z" fill="white"/></svg>'
+    />
+
+    <!-- Theme color for PWA-ish feel -->
+    <meta name="theme-color" content="#336ee6" />
+
+    <!-- Runtime config before the app so axios can read it -->
     <script src="/runtime-config.js"></script>
   </head>
   <body>
-    <!-- This ID must match what main.tsx queries -->
-    <div id="root"></div>
+    <div id="root" class="fade-up"></div>
 
-    <!-- Load the app bundle AFTER the root exists (bottom of body) -->
+    <!-- App entry -->
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

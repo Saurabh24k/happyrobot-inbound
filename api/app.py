@@ -2,7 +2,7 @@
 from fastapi import FastAPI, Header, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any, Union, Literal
 from datetime import datetime, date, time
 from pathlib import Path
 from collections import defaultdict
@@ -109,14 +109,20 @@ class EvaluateOfferRequest(BaseModel):
     loadboard_rate: float
     carrier_offer: float
     round_num: int = 1
-    # passthroughs are handled by the agent graph; keep this minimal
+    # passthroughs are handled by the agent graph;
 
 
 class EvaluateOfferResponse(BaseModel):
-    decision: str          # accept | counter | counter-final | reject | confirm-low
+    decision: Literal["accept","counter","counter-final","reject","confirm-low"]          # accept | counter | counter-final | reject | confirm-low
     counter_rate: float
     floor: float
     max_rounds: int
+    # helper fields ( tool returns these; keeping them visible to the agent)
+    next_round_num: Optional[int] = None
+    next_prev_counter: Optional[float] = None
+    next_anchor_high: Optional[float] = None
+    # debug from evaluate_offer(debug=True)
+    reason: Optional[str] = None
 
 
 class LogEventRequest(BaseModel):
