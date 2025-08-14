@@ -171,7 +171,6 @@ def evaluate_offer(
         too_low_vs_floor = offer < (floor * float(low_confirm_ratio))
         too_low_vs_board = offer < (lb * float(min_ratio_vs_board))
         if too_low_vs_floor or too_low_vs_board:
-            # Ask the agent to *confirm* verbally before accepting
             return _mk_out("confirm-low", _snap(offer, tick), floor, r, prev, anc_high_val, "r1_lowball_confirm")
 
     # ---------- fast accepts ----------
