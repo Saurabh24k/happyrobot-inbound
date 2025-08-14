@@ -1,5 +1,5 @@
 services:
-  # --- Backend (your working service) ---
+  # --- Backend ---
   - type: web
     name: happyrobot-inbound
     env: docker
@@ -20,7 +20,7 @@ services:
       - key: WATCHDOG_TTL_SEC
         value: "180"
 
-  # --- Frontend (Dockerized Vite + Nginx) ---
+  # --- Frontend ---
   - type: web
     name: inbound-frontend
     env: docker
