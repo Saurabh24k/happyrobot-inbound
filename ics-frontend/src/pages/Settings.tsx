@@ -76,7 +76,6 @@ function normalizeBase(input: string) {
 function isLikelyUrl(s: string) {
   try {
     const test = /^https?:\/\//i.test(s) ? s : `https://${s}`;
-    // eslint-disable-next-line no-new
     new URL(test);
     return true;
   } catch {
@@ -144,7 +143,6 @@ export default function Settings() {
   });
 
   // -------- Derived states for the banner --------
-  // correct evaluation (split to avoid minifier confusion)
   const _allOk = diag.auth === 'ok' && diag.health === 'ok' && diag.openapi === 'ok';
   const anyLoading = [diag.auth, diag.health, diag.openapi].some((s) => s === 'loading');
   const anyFail = [diag.auth, diag.health, diag.openapi].some((s) => s === 'fail');
@@ -199,7 +197,7 @@ export default function Settings() {
 
   const useDemo = () => {
     setApiBase('https://happyrobot-inbound.onrender.com');
-    setApiKey(''); // add a default if your demo requires it
+    setApiKey('');
     setStatus('Demo preset applied. Save to persist.');
   };
 
