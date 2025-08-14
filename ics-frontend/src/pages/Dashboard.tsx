@@ -76,7 +76,7 @@ function percentChange(series?: number[]) {
   return ((last - first) / Math.abs(first)) * 100;
 }
 
-// Cache-busting GET (page-local; avoids touching shared api)
+// Cache-busting GET
 async function getNoCache<T = any>(url: string, params?: Record<string, any>) {
   const { data } = await api.get<T>(url, { params: { ...(params || {}), _ts: Date.now() } });
   return data;
@@ -135,7 +135,6 @@ function StatChip({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-// NEW: premium, functional legend chip
 function SeriesToggle({
   label, active, onClick, swatch,
 }: { label: string; active: boolean; onClick: () => void; swatch: string }) {
@@ -206,7 +205,6 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // mount
 
-  // Fetch data whenever range changes
   useEffect(() => { fetchSummary(); }, [since, until, fetchSummary]);
 
   // Auto refresh
@@ -237,7 +235,6 @@ export default function Dashboard() {
   ];
   const totalOutcomes = outcomeData.reduce((s, d) => s + (d.value || 0), 0);
 
-  // End label follows selected until date
   const endLabel = useMemo(() => {
     const d = until || (timeseries.length ? timeseries[timeseries.length - 1].date : null);
     try {
@@ -268,7 +265,6 @@ export default function Dashboard() {
   const [showCalls, setShowCalls] = useState(true);
   const [showBooked, setShowBooked] = useState(true);
 
-  // Colors for the new widget (no purple)
   const callsColor = '#2563eb';   // blue-600
   const bookedColor = '#0ea5e9';  // sky-500
 
@@ -383,7 +379,6 @@ export default function Dashboard() {
 
       {/* Trends & Outcomes */}
       <SimpleGrid columns={{ base: 1, lg: 2 }} spacing={6}>
-        {/* —— New premium Volume & Bookings widget —— */}
         <Card title="Volume & Bookings" subtitle="Daily calls vs. booked loads">
           {isLoading ? (
             <Skeleton h="340px" rounded="md" />
@@ -583,7 +578,6 @@ function Kpi({ title, value, series, isPercent }: { title: string; value: string
   );
 }
 
-// Unified donut with center label + hover highlight
 function Donut({
   data, inner = '55%', outer = '85%', centerLabel,
 }: {
