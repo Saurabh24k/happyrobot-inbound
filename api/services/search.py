@@ -1,4 +1,3 @@
-# api/services/search.py
 from __future__ import annotations
 from typing import List, Dict, Optional, Any
 from pathlib import Path
@@ -7,7 +6,6 @@ import os
 import re
 import logging
 
-# Prefer pandas, but never crash the API if it isn't available
 try:
     import pandas as pd  # type: ignore
 except Exception:  # pragma: no cover
@@ -17,12 +15,9 @@ log = logging.getLogger(__name__)
 
 # ────────────────────────────────────────────────────────────────────
 # Dataset location (overridable via env)
-# Default resolves to /app/data/loads.csv when packaged in Docker
-# ────────────────────────────────────────────────────────────────────
 _DEFAULT_CSV = Path(__file__).resolve().parents[2] / "data" / "loads.csv"
 CSV_PATH = Path(os.getenv("LOADS_CSV_PATH", str(_DEFAULT_CSV)))
 
-# Try python-dateutil for smarter parsing; fall back to pandas if missing
 try:
     from dateutil import parser as du_parser
 except Exception:  # pragma: no cover
@@ -30,7 +25,6 @@ except Exception:  # pragma: no cover
 
 # ────────────────────────────────────────────────────────────────────
 # Helpers
-# ────────────────────────────────────────────────────────────────────
 
 def _norm(s: Optional[str]) -> str:
     return (s or "").strip().lower()
@@ -71,9 +65,8 @@ def _match_city_state(series, query: str):
         state_regex = re.compile(rf",\s*{abbr}$", flags=re.I)
         return s_lower.str.contains(q) | s.str.contains(state_regex)
     return s_lower.str.contains(q)
-
-# ── Date normalization: assume next future occurrence if year omitted ──
-
+# ────────────────────────────────────────────────────────────────────
+# ── Date normalization:
 _YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
 
 def _parse_with_default_year(text: Optional[str], now: datetime) -> Optional[datetime]:
@@ -86,7 +79,7 @@ def _parse_with_default_year(text: Optional[str], now: datetime) -> Optional[dat
     had_year = bool(_YEAR_RE.search(raw))
 
     if du_parser:
-        # Use current year as default when year is missing
+        # current year as default when year is missing
         default_base = datetime(now.year, 1, 1, 0, 0, 0)
         try:
             dt = du_parser.parse(raw, default=default_base, fuzzy=True)
@@ -102,7 +95,6 @@ def _parse_with_default_year(text: Optional[str], now: datetime) -> Optional[dat
             return None
         dt = dt.to_pydatetime()
 
-    # If no year provided and parsed dt is in the past, roll it to next year
     if not had_year and dt < now:
         try:
             dt = dt.replace(year=now.year + 1)
@@ -133,7 +125,6 @@ def _normalize_future_window(
     if end_dt and not start_dt:
         start_dt = end_dt - timedelta(hours=12)
 
-    # Align if both exist but end < start (e.g., times only spanning midnight)
     if start_dt and end_dt and end_dt < start_dt:
         end_dt = end_dt.replace(year=start_dt.year, month=start_dt.month, day=start_dt.day)
         if end_dt < start_dt:
@@ -145,7 +136,7 @@ def _normalize_future_window(
         end_dt.strftime(fmt) if end_dt else None,
     )
 
-# ────────────────────────────────────────────────────────────────────
+
 # Main search
 # ────────────────────────────────────────────────────────────────────
 
@@ -175,11 +166,9 @@ def _read_df_safely() -> Optional["pd.DataFrame"]:
         log.exception("Failed to read CSV at %s: %s", path, e)
         return None
 
-    # Create any missing required columns to avoid downstream crashes
     for col in _REQUIRED_COLS - set(df.columns):
         df[col] = None
 
-    # Coerce to sensible types where possible (but never raise)
     try:
         if "loadboard_rate" in df:
             df["loadboard_rate"] = pd.to_numeric(df["loadboard_rate"], errors="coerce")
@@ -211,7 +200,7 @@ def search_loads(
     if df is None or df.empty:
         return []
 
-    # Equipment filter (required)
+    # Equipment filter
     et = (equipment_type or "").strip().lower()
     if not et:
         return []
@@ -239,7 +228,6 @@ def search_loads(
         except Exception:
             pass
 
-    # Keep base for widening
     base_df = df.copy()
 
     # Lane filters
@@ -253,19 +241,19 @@ def search_loads(
 
     df = apply_lane_filters(df)
 
-    # Widen search if empty → drop destination filter first, then origin
+    # Widen search if empty → drops destination filter first, then origin
     if df.empty and destination:
         df = base_df.copy()
         if origin:
             df = df[_match_city_state(df["origin"], origin)]
 
     if df.empty and origin:
-        df = base_df.copy()  # only equipment/time filters remain
+        df = base_df.copy()
 
     if df.empty:
         return []
 
-    # Ranking: score by lane match strength (simple heuristic)
+    # Ranking: simple heuristic
     def _score_row(row) -> int:
         score = 0
         if origin and _norm(origin) in _norm(str(row.get("origin", ""))):
@@ -284,10 +272,8 @@ def search_loads(
         df = df.copy()
         df["__score"] = df.apply(_score_row, axis=1)
     except Exception:
-        # If scoring fails for any reason, just keep rows as-is
         df["__score"] = 0
 
-    # Prefer closer pickup to requested start if provided
     if pickup_window_start:
         try:
             start_dt = pd.to_datetime(pickup_window_start)
@@ -307,7 +293,6 @@ def search_loads(
     except Exception:
         out = df[cols].head(3)
 
-    # Convert to plain dicts (ensure JSON-serializable)
     records: List[Dict[str, Any]] = []
     for r in out.to_dict(orient="records"):
         r["loadboard_rate"] = _safe_float(r.get("loadboard_rate"))
