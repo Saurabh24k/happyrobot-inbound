@@ -1,4 +1,3 @@
-# api/models.py
 from __future__ import annotations
 from typing import Optional, Dict, Any
 from datetime import datetime
@@ -6,8 +5,6 @@ from datetime import datetime
 from sqlmodel import SQLModel, Field
 from sqlalchemy import Column, JSON
 
-# Keep everything as simple types (str/int/float/bool) — no Python Enum types.
-# JSON columns work on Postgres and SQLite with this generic SQLAlchemy JSON.
 
 class Event(SQLModel, table=True):
     __tablename__ = "events"
@@ -27,7 +24,6 @@ class Event(SQLModel, table=True):
     loadboard_rate: Optional[float] = None
     equipment_type: Optional[str] = Field(default=None, index=True)
 
-    # free-form payload for auditing/troubleshooting
     extra: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
 
 
