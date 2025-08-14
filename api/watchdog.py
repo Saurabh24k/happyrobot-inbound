@@ -13,7 +13,7 @@ FINAL_LABELS = {"booked", "no-agreement", "no-match", "failed-auth", "abandoned"
 WATCHDOG_ENABLED = os.getenv("WATCHDOG_ENABLED", "1") == "1"
 WATCHDOG_INTERVAL_SEC = int(os.getenv("WATCHDOG_INTERVAL_SEC", "60"))
 WATCHDOG_TTL_SEC = int(os.getenv("WATCHDOG_TTL_SEC", "180"))
-WATCHDOG_LEADER = os.getenv("WATCHDOG_LEADER", "1") == "1"  # set to '0' on non-leader pods if you scale out
+WATCHDOG_LEADER = os.getenv("WATCHDOG_LEADER", "1") == "1"
 
 def _utcnow() -> datetime:
     return datetime.utcnow()
@@ -31,7 +31,6 @@ async def _loop(interval_sec: int, ttl_sec: int):
             with get_session() as s:
                 sid_set: Set[str] = set()
 
-                # Use any footprint to discover sessions
                 offer_sids = s.exec(select(Offer.session_id).where(Offer.session_id.is_not(None)).distinct()).all()
                 sid_set.update([sid for (sid,) in offer_sids if sid])
 
@@ -53,9 +52,6 @@ async def _loop(interval_sec: int, ttl_sec: int):
                     if final:
                         continue
 
-                    # Find last activity timestamp:
-                    # - Prefer latest Offer.t
-                    # - Else latest Event.ts (including 'activity' events)
                     last_offer = s.exec(
                         select(Offer).where(Offer.session_id == sid).order_by(Offer.t.desc()).limit(1)
                     ).first()
@@ -80,7 +76,6 @@ async def _loop(interval_sec: int, ttl_sec: int):
         except asyncio.CancelledError:
             break
         except Exception:
-            # Never kill the app on watchdog errors
             continue
 
 def start_watchdog(app) -> Optional[asyncio.Task]:
