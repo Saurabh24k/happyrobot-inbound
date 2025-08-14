@@ -1,4 +1,3 @@
-// src/pages/Loads.tsx
 import { useMemo, useState } from 'react';
 import {
   Box,
@@ -243,13 +242,11 @@ export default function Loads() {
               return;
             }
           } else {
-            // HTML docs page—record that we found docs
             setStatus(`Found docs at ${p}. Open it in a new tab.`);
             setDiscovered([]);
             return;
           }
         } catch {
-          // continue trying the next path
         }
       }
       setOpenapiError('Could not fetch OpenAPI/docs from any known path.');
