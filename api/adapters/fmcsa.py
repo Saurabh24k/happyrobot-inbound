@@ -45,7 +45,7 @@ def verify_mc(mc_number: str, mock: bool = False) -> Dict[str, Any]:
             "source": "mock",
         }
 
-    # If no key, keep prior mock behavior to avoid breaking flows
+    # If no key
     if not FMCSA_API_KEY:
         return {
             "mc_number": mc_number,
@@ -55,7 +55,7 @@ def verify_mc(mc_number: str, mock: bool = False) -> Dict[str, Any]:
             "source": "mock",
         }
 
-    # QCMobile requires the key appended as ?webKey=...
+    # QCMobile requires the key appended as ?webKey=
     params = {"webKey": FMCSA_API_KEY}
 
     try:
@@ -99,7 +99,7 @@ def verify_mc(mc_number: str, mock: bool = False) -> Dict[str, Any]:
         a_payload = _g(a, "content") or a
         auth_eval = _eligible_from_authority(a_payload)
 
-        # 3) Out-of-service (optional; 404 means no OOS record)
+        # 3) Out-of-service
         oos_active = False
         oos_url = f"{FMCSA_BASE_URL}/carriers/{dot_number}/oos"
         try:
@@ -113,7 +113,7 @@ def verify_mc(mc_number: str, mock: bool = False) -> Dict[str, Any]:
                     ):
                         oos_active = True
         except httpx.HTTPError:
-            oos_active = False  # don't block eligibility if OOS call fails
+            oos_active = False
 
         eligible = bool(auth_eval["any_active"] and not oos_active)
 
@@ -121,7 +121,7 @@ def verify_mc(mc_number: str, mock: bool = False) -> Dict[str, Any]:
             "mc_number": mc_number,
             "eligible": eligible,
             "authority_status": auth_eval["summary"],
-            "safety_rating": None,  # can be expanded with additional endpoints
+            "safety_rating": None,
             "source": "fmcsa",
         }
 
