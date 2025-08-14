@@ -7,12 +7,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 COPY api/requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# app code as a proper package
+# app code as a package
 COPY api /app/api
-# include data directory!
 COPY data /app/data
 
-# ensure package import works
 RUN [ -f /app/api/__init__.py ] || touch /app/api/__init__.py
 
 # point search service to the CSV in the image
