@@ -1,4 +1,3 @@
-# api/metrics.py
 from __future__ import annotations
 import os
 from datetime import datetime
@@ -7,10 +6,9 @@ from fastapi import APIRouter
 from sqlalchemy import text
 from sqlmodel import Session
 
-from .db import engine, get_session  # adjust import if db.py lives elsewhere
-from .models import Event  # only to select last event timestamp if desired
+from .db import engine, get_session
+from .models import Event
 
-# 1 GB default unless overridden (Render free tier uses 1GB)
 DB_STORAGE_LIMIT_BYTES = int(os.getenv("DB_STORAGE_LIMIT_BYTES", str(1024 * 1024 * 1024)))
 
 def _pg_usage(session: Session) -> Dict[str, Any]:
@@ -76,7 +74,6 @@ def _sqlite_usage(session: Session) -> Dict[str, Any]:
     page_size = session.exec(text("PRAGMA page_size")).first()
     used_bytes = int((page_count or (0,))[0]) * int((page_size or (0,))[0])
 
-    # table sizes not directly available—approximate row counts
     tables = []
     for row in session.exec(
         text("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
