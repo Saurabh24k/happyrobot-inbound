@@ -1,6 +1,6 @@
 # Inbound Carrier Sales — HappyRobot POC
 
-Automated inbound carrier calls: verify MCs against FMCSA, pitch loads, negotiate up to 3 rounds, and hand off to a sales rep — with clean KPIs and an audit trail.
+Automated inbound carrier calls: verify MCs against FMCSA, pitch loads, negotiate up to 3 rounds, and hand off to a sales rep with clean KPIs and an audit trail.
 
 ---
 
