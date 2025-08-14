@@ -18,7 +18,7 @@ from .db import init_db, get_session
 from .models import Event, Offer, ToolCall, Utterance
 from sqlmodel import select
 
-# Watchdog runner (separate module)
+# Watchdog runner
 from .watchdog import start_watchdog, stop_watchdog
 
 # DB usage helper & router
@@ -34,7 +34,7 @@ FINAL_LABELS = {"booked", "no-agreement", "no-match", "failed-auth", "abandoned"
 @app.on_event("startup")
 def _startup():
     init_db()
-    # Launch background watchdog (no-op if disabled via env inside watchdog.py)
+    # background watchdog
     app.state._watchdog_task = start_watchdog(app)
 
 
@@ -64,7 +64,7 @@ def require_api_key(x_api_key: Optional[str] = Header(None)) -> None:
 # ── Pydantic models ────────────────────────────────────────────────────────
 class VerifyMCRequest(BaseModel):
     mc_number: Union[str, int] = Field(..., description="Carrier MC (docket) number")
-    # Accept bool OR string because some platforms send "true"/"false" as strings
+    # Bool OR string because "true"/"false" as strings
     mock: Optional[Union[bool, str]] = Field(None, description="Force mock for testing")
 
 
@@ -109,7 +109,6 @@ class EvaluateOfferRequest(BaseModel):
     loadboard_rate: float
     carrier_offer: float
     round_num: int = 1
-    # passthroughs are handled by the agent graph;
 
 
 class EvaluateOfferResponse(BaseModel):
@@ -117,11 +116,9 @@ class EvaluateOfferResponse(BaseModel):
     counter_rate: float
     floor: float
     max_rounds: int
-    # helper fields ( tool returns these; keeping them visible to the agent)
     next_round_num: Optional[int] = None
     next_prev_counter: Optional[float] = None
     next_anchor_high: Optional[float] = None
-    # debug from evaluate_offer(debug=True)
     reason: Optional[str] = None
 
 
@@ -131,7 +128,6 @@ class LogEventRequest(BaseModel):
 
 
 class FinalizePayload(BaseModel):
-    # Optional one-shot finalizer payload
     session_id: Optional[str] = None
     mc_number: Optional[str] = None
     selected_load_id: Optional[str] = None
@@ -380,7 +376,7 @@ def log_event(req: LogEventRequest):
             )
             s.add(e)
 
-            # Optional price trail on finalization
+            # price trail on finalization
             qrate = _to_float(data.get("quoted_rate"))
             if sid and qrate is not None:
                 s.add(Offer(session_id=sid, who="carrier", value=qrate, t=now))
@@ -400,7 +396,6 @@ def log_event(req: LogEventRequest):
             ok = data.get("ok")
             info = {k: v for k, v in data.items() if k not in {"session_id", "sessionId", "fn", "ok"}}
             s.add(ToolCall(session_id=sid, fn=fn, ok=bool(ok) if ok is not None else None, info=info))
-            # Also mark activity so watchdog has a timestamp even for tool-only sessions
             s.add(Event(event="activity", session_id=sid, extra={"fn": fn}))
 
         if ev_name == "final-artifacts" and sid:
@@ -452,7 +447,6 @@ def analytics_db_usage():
     return get_db_usage()
 
 
-# (Optional public health variant without auth)
 @app.get("/health/db")
 def health_db():
     try:
@@ -503,7 +497,6 @@ def finalize_call(p: FinalizePayload):
         )
         s.add(e)
 
-        # Optional: persist artifacts in their own tables
         if sid and p.offers:
             for o in p.offers:
                 v = _to_float(o.get("value"))
@@ -638,7 +631,7 @@ def calls_list(
         items.append({
             "id": sid,
             "started_at": first.ts.isoformat(),
-            "duration_sec": 0,  # TODO: populate if/when you log duration
+            "duration_sec": 0,  # TODO: populate if/when log duration
             "mc_number": first.mc or last.mc,
             "selected_load_id": first.load_id or last.load_id,
             "agreed_rate": last.agreed_rate,
