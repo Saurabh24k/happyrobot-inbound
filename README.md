@@ -9,6 +9,7 @@ Automated inbound carrier calls: verify MCs against FMCSA, pitch loads, negotiat
 * **Dashboard (frontend):** [https://inbound-frontend.onrender.com/dashboard](https://inbound-frontend.onrender.com/dashboard)
 * **API Base (backend):** [https://happyrobot-inbound.onrender.com](https://happyrobot-inbound.onrender.com)
 * **OpenAPI (JSON):** [https://happyrobot-inbound.onrender.com/openapi.json](https://happyrobot-inbound.onrender.com/openapi.json)
+* **Outbound Campaign (Live Agent):** [https://v2.platform.happyrobot.ai/deployments/le1prokaa63h/b4t9r7dfhbn7](https://v2.platform.happyrobot.ai/deployments/le1prokaa63h/b4t9r7dfhbn7)  
 
 **Auth header (all API calls):** `x-api-key: prod-xyz-123`
 
